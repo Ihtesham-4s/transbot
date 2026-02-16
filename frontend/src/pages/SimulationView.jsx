@@ -30,6 +30,21 @@ const ZONE_EDGES = Object.freeze([
   ["ZONE_D", "ZONE_E"]
 ]);
 
+const BATTERY_PER_UNIT = 2;
+const CHARGE_TRAVEL_SECONDS_PER_UNIT = 2;
+
+const ZONE_EDGE_DISTANCE = Object.freeze({
+  "ZONE_CHARGE-ZONE_A": 2,
+  "ZONE_CHARGE-ZONE_B": 3,
+  "ZONE_A-ZONE_B": 4,
+  "ZONE_A-ZONE_C": 6,
+  "ZONE_B-ZONE_C": 3,
+  "ZONE_B-ZONE_D": 5,
+  "ZONE_C-ZONE_D": 2,
+  "ZONE_C-ZONE_E": 4,
+  "ZONE_D-ZONE_E": 3
+});
+
 function edgeKey(a, b) {
   return [a, b].sort().join("-");
 }
@@ -39,8 +54,16 @@ function buildAdjacency() {
   Object.keys(ZONE_NODES).forEach((z) => adj.set(z, []));
   ZONE_EDGES.forEach(([from, to]) => {
     if (!adj.has(from) || !adj.has(to)) return;
-    adj.get(from).push(to);
-    adj.get(to).push(from);
+    const sorted = edgeKey(from, to);
+    const direct = `${from}-${to}`;
+    const reverse = `${to}-${from}`;
+    const dist =
+      ZONE_EDGE_DISTANCE[sorted] ??
+      ZONE_EDGE_DISTANCE[direct] ??
+      ZONE_EDGE_DISTANCE[reverse] ??
+      1;
+    adj.get(from).push({ to, distance: dist });
+    adj.get(to).push({ to: from, distance: dist });
   });
   return adj;
 }
@@ -52,23 +75,46 @@ function findPath(start, end) {
   if (start === end) return [start];
   if (!GRAPH_ADJACENCY.has(start) || !GRAPH_ADJACENCY.has(end)) return [];
 
-  const queue = [start];
+  // Dijkstra (weighted) — matches backend's shortest-distance routing.
+  const dist = new Map();
   const prev = new Map();
-  const visited = new Set([start]);
+  const visited = new Set();
 
-  while (queue.length) {
-    const node = queue.shift();
-    if (node === end) break;
-    const neighbors = GRAPH_ADJACENCY.get(node) || [];
+  for (const node of GRAPH_ADJACENCY.keys()) {
+    dist.set(node, Number.POSITIVE_INFINITY);
+  }
+  dist.set(start, 0);
+
+  while (visited.size < GRAPH_ADJACENCY.size) {
+    let current = null;
+    let best = Number.POSITIVE_INFINITY;
+
+    for (const [node, d] of dist.entries()) {
+      if (visited.has(node)) continue;
+      if (d < best) {
+        best = d;
+        current = node;
+      }
+    }
+
+    if (!current) break;
+    if (current === end) break;
+
+    visited.add(current);
+    const neighbors = GRAPH_ADJACENCY.get(current) || [];
     for (const n of neighbors) {
-      if (visited.has(n)) continue;
-      visited.add(n);
-      prev.set(n, node);
-      queue.push(n);
+      if (visited.has(n.to)) continue;
+      const candidate = best + (Number(n.distance) || 0);
+      if (candidate < (dist.get(n.to) ?? Number.POSITIVE_INFINITY)) {
+        dist.set(n.to, candidate);
+        prev.set(n.to, current);
+      }
     }
   }
 
-  if (!visited.has(end)) return [];
+  const final = dist.get(end);
+  if (!Number.isFinite(final) || final === Number.POSITIVE_INFINITY) return [];
+
   const path = [];
   let cur = end;
   while (cur) {
@@ -76,6 +122,7 @@ function findPath(start, end) {
     if (cur === start) break;
     cur = prev.get(cur);
   }
+  if (!path.length || path[0] !== start) return [];
   return path;
 }
 
@@ -101,6 +148,24 @@ function buildSegments(path) {
   return { points, segments, total };
 }
 
+function getGraphDistance(path) {
+  if (!Array.isArray(path) || path.length < 2) return 0;
+  let total = 0;
+  for (let i = 0; i < path.length - 1; i += 1) {
+    const a = path[i];
+    const b = path[i + 1];
+    const sorted = edgeKey(a, b);
+    const direct = `${a}-${b}`;
+    const reverse = `${b}-${a}`;
+    const dist =
+      ZONE_EDGE_DISTANCE[sorted] ??
+      ZONE_EDGE_DISTANCE[direct] ??
+      ZONE_EDGE_DISTANCE[reverse];
+    if (typeof dist === "number") total += dist;
+  }
+  return total;
+}
+
 function positionAlong(segments, total, distance) {
   if (!segments.length) return null;
   let remaining = distance;
@@ -118,23 +183,42 @@ function positionAlong(segments, total, distance) {
   return { x: last.b.x, y: last.b.y };
 }
 
+function formatSeconds(totalSeconds) {
+  if (!Number.isFinite(totalSeconds)) return "—";
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.max(0, totalSeconds % 60);
+  if (minutes <= 0) return `${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+}
+
 export default function SimulationView() {
   const { user, token, logout } = useAuth();
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
   const [robot, setRobot] = useState(null);
   const [tasks, setTasks] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [_loading, setLoading] = useState(true);
   const [feasibility, setFeasibility] = useState(null);
   const [robotPos, setRobotPos] = useState(null);
   const [simulationPaused, setSimulationPaused] = useState(false);
   const [acting, setActing] = useState(false);
   const [chargingTrip, setChargingTrip] = useState(false);
+  const [localChargeArrived, setLocalChargeArrived] = useState(false);
   const [chargingOrigin, setChargingOrigin] = useState(null);
   const [taskTripComplete, setTaskTripComplete] = useState(false);
   const motionProgressRef = useRef(0);
+  const progressRef = useRef(0);
   const [pickupHold, setPickupHold] = useState(false);
   const [movePhase, setMovePhase] = useState("toPickup");
+  const [progressPct, setProgressPct] = useState(0);
+  const [speedMultiplier, setSpeedMultiplier] = useState(1);
+  const [simElapsed, setSimElapsed] = useState(0);
+  const [showPath, setShowPath] = useState(true);
+  const [showPov, _setShowPov] = useState(true);
+  const [povZoom, _setPovZoom] = useState(2.4);
+  const tripStartBatteryRef = useRef(null);
   const lastChargeAnimatedForRef = useRef(null);
+  const lastRobotLocationRef = useRef(null);
+  const lastChargeOriginRef = useRef(null);
   const [lastChargeCompletedId, setLastChargeCompletedId] = useState(() => {
     try {
       return localStorage.getItem("simulation.lastChargeCompletedId") || "";
@@ -171,31 +255,63 @@ export default function SimulationView() {
 
   const analysis = feasibility?.analysis || null;
   const basePath = analysis?.details?.path || [];
+  const robotLocation = robot?.location_zone_id?.code || robot?.location || null;
   const batteryLevel = Number(robot?.batteryLevel ?? 0);
   const lowBattery = batteryLevel <= 20;
   const isMoving = robot?.currentState === ROBOT_STATES.MOVING;
-  const isCharging = (robot?.location === "ZONE_CHARGE" || chargingTrip) && robot?.currentState === ROBOT_STATES.IDLE && batteryLevel < 100;
+  const atDockEffective = robotLocation === "ZONE_CHARGE" || localChargeArrived;
+  const isCharging = atDockEffective && robot?.currentState === ROBOT_STATES.IDLE && batteryLevel < 100;
   const isFullBattery = batteryLevel >= 100;
-  const idleNeedsCharge = robot?.currentState === ROBOT_STATES.IDLE && lowBattery;
-  const shouldShowChargeTrip = robot?.currentState === ROBOT_STATES.IDLE && (lowBattery || !activeTask);
+  const batteryDepleted = batteryLevel <= 0;
+  const hasPendingTasks = useMemo(() => tasks.some((t) => t.status === "PENDING"), [tasks]);
+  const chargingTravelActive = useMemo(() => {
+    if (!robot?.chargingUntil) return false;
+    const until = new Date(robot.chargingUntil).getTime();
+    return Number.isFinite(until) && until > Date.now();
+  }, [robot?.chargingUntil]);
+
+  const shouldShowChargeTrip =
+    robot?.currentState === ROBOT_STATES.IDLE &&
+    robot?.currentState !== ROBOT_STATES.ERROR &&
+    !batteryDepleted &&
+    !atDockEffective &&
+    (chargingTravelActive || lowBattery || (!activeTask && !hasPendingTasks));
   const canPause = (isMoving || chargingTrip || pickupHold) && !taskTripComplete;
 
   const chargePath = useMemo(() => {
+    if (localChargeArrived) return [];
     if (!shouldShowChargeTrip && !chargingTrip) return [];
-    const from = chargingOrigin || (robot?.location && robot.location !== "ZONE_CHARGE" ? robot.location : null) || lastCompletedDrop;
+    const from = chargingOrigin || (robotLocation && robotLocation !== "ZONE_CHARGE" ? robotLocation : null) || lastCompletedDrop;
     if (!from) return [];
     return findPath(from, "ZONE_CHARGE");
-  }, [shouldShowChargeTrip, chargingTrip, robot?.location, chargingOrigin, lastCompletedDrop]);
+  }, [localChargeArrived, shouldShowChargeTrip, chargingTrip, robotLocation, chargingOrigin, lastCompletedDrop]);
 
-  const displayPath = chargingTrip && chargePath.length ? chargePath : basePath;
+  const chargeDistance = useMemo(() => getGraphDistance(chargePath), [chargePath]);
+  const chargeDrain = useMemo(() => chargeDistance * BATTERY_PER_UNIT, [chargeDistance]);
+
+  const pickup = activeTask?.pickup_zone;
+  const drop = activeTask?.drop_zone;
+
+  const fallbackTaskPath = useMemo(() => {
+    if (!activeTask || !pickup || !drop) return [];
+    const start = robotLocation || "ZONE_CHARGE";
+    const toPickup = findPath(start, pickup);
+    const toDrop = findPath(pickup, drop);
+    if (!toPickup.length && !toDrop.length) return [];
+    if (!toPickup.length) return toDrop;
+    if (!toDrop.length) return toPickup;
+    const merged = [...toPickup];
+    const startIndex = toDrop[0] === merged[merged.length - 1] ? 1 : 0;
+    merged.push(...toDrop.slice(startIndex));
+    return merged;
+  }, [activeTask, pickup, drop, robotLocation]);
+
+  const displayPath = chargingTrip && chargePath.length ? chargePath : basePath.length ? basePath : fallbackTaskPath;
   const pathEdges = new Set();
 
   for (let i = 0; i < displayPath.length - 1; i += 1) {
     pathEdges.add(edgeKey(displayPath[i], displayPath[i + 1]));
   }
-
-  const pickup = activeTask?.pickup_zone;
-  const drop = activeTask?.drop_zone;
 
   const segmentsInfo = useMemo(() => buildSegments(displayPath), [displayPath]);
   const pickupIndex = useMemo(() => {
@@ -213,6 +329,61 @@ export default function SimulationView() {
     return displayPath.slice(pickupIndex);
   }, [displayPath, pickupIndex]);
 
+  const pickupDistance = useMemo(() => {
+    const fromAnalysis = analysis?.details?.distance_to_pickup;
+    if (Number.isFinite(fromAnalysis)) return fromAnalysis;
+    return getGraphDistance(pathToPickup);
+  }, [analysis?.details?.distance_to_pickup, pathToPickup]);
+
+  const dropDistance = useMemo(() => {
+    const fromAnalysis = analysis?.details?.distance_task;
+    if (Number.isFinite(fromAnalysis)) return fromAnalysis;
+    return getGraphDistance(pathToDrop);
+  }, [analysis?.details?.distance_task, pathToDrop]);
+
+  const pickupDrain = useMemo(() => pickupDistance * BATTERY_PER_UNIT, [pickupDistance]);
+  const dropDrain = useMemo(() => dropDistance * BATTERY_PER_UNIT, [dropDistance]);
+
+  useEffect(() => {
+    const inTrip = Boolean(chargingTrip) || (Boolean(isMoving) && Boolean(activeTask));
+    if (inTrip) {
+      if (tripStartBatteryRef.current == null) {
+        tripStartBatteryRef.current = batteryLevel;
+      }
+    } else {
+      tripStartBatteryRef.current = null;
+    }
+  }, [chargingTrip, isMoving, activeTask, batteryLevel]);
+
+  const taskDrainSoFar = useMemo(() => {
+    if (!isMoving || chargingTrip || !activeTask) return 0;
+    const phaseProgress = Math.min(1, Math.max(0, progressPct));
+    if (movePhase === "toDrop") return pickupDrain + dropDrain * phaseProgress;
+    return pickupDrain * phaseProgress;
+  }, [isMoving, chargingTrip, activeTask, movePhase, pickupDrain, dropDrain, progressPct]);
+
+  const displayBatteryLevel = useMemo(() => {
+    const startBattery = Number.isFinite(tripStartBatteryRef.current) ? tripStartBatteryRef.current : batteryLevel;
+    if (chargingTrip && chargeDrain > 0) {
+      const phaseProgress = Math.min(1, Math.max(0, progressPct));
+      const current = Math.max(0, startBattery - chargeDrain * phaseProgress);
+      return Math.round(current * 10) / 10;
+    }
+    if (isMoving && taskDrainSoFar > 0) {
+      const current = Math.max(0, startBattery - taskDrainSoFar);
+      return Math.round(current * 10) / 10;
+    }
+    return batteryLevel;
+  }, [chargingTrip, chargeDrain, batteryLevel, progressPct, isMoving, taskDrainSoFar]);
+
+  const pickupSegments = useMemo(() => buildSegments(pathToPickup), [pathToPickup]);
+  const dropSegments = useMemo(() => buildSegments(pathToDrop), [pathToDrop]);
+  const chargeSegments = useMemo(() => buildSegments(chargePath), [chargePath]);
+
+  const queuedTasks = useMemo(() => {
+    return tasks.filter((t) => t.status === "ASSIGNED").slice(0, 4);
+  }, [tasks]);
+
   async function refresh() {
     if (!token) return;
     setLoading(true);
@@ -227,12 +398,23 @@ export default function SimulationView() {
 
   async function handleStart() {
     if (!activeTask?.id) return;
+    const isResume = activeTask.status === "IN_PROGRESS";
     setActing(true);
     try {
-      await startTask(token, activeTask.id);
-      setTaskTripComplete(false);
-      setPickupHold(false);
-      setMovePhase("toPickup");
+      try {
+        await startTask(token, activeTask.id);
+      } catch {
+        // If we're resuming an already-started task, allow the UI to continue
+        // even if the backend start endpoint rejects (e.g., after a hot-reload).
+        if (!isResume) throw new Error("Start failed.");
+      }
+      if (!isResume) {
+        setTaskTripComplete(false);
+        setPickupHold(false);
+        setMovePhase("toPickup");
+      } else {
+        setSimulationPaused(false);
+      }
       await refresh();
     } finally {
       setActing(false);
@@ -243,7 +425,16 @@ export default function SimulationView() {
     if (!activeTask?.id) return;
     setActing(true);
     try {
-      await completeTask(token, activeTask.id, { auto: true });
+      let adminManualMode = false;
+      if (user?.role === "admin") {
+        try {
+          adminManualMode = localStorage.getItem("taskpanel.adminManualMode") === "true";
+        } catch {
+          adminManualMode = false;
+        }
+      }
+      const shouldAutoAssign = !user?.role || user?.role !== "admin" || !adminManualMode;
+      await completeTask(token, activeTask.id, { auto: shouldAutoAssign });
       await refresh();
     } finally {
       setActing(false);
@@ -290,8 +481,66 @@ export default function SimulationView() {
     };
   }, [token, activeTask?.id]);
 
+
   useEffect(() => {
-    const location = robot?.location || "ZONE_CHARGE";
+    const currentLocation = robotLocation || null;
+    if (currentLocation) {
+      lastRobotLocationRef.current = currentLocation;
+    }
+  }, [robotLocation]);
+
+  useEffect(() => {
+    if (localChargeArrived) {
+      // Keep the robot pinned to the dock until backend location catches up.
+      setChargingTrip(false);
+      setChargingOrigin(null);
+      const dock = ZONE_NODES.ZONE_CHARGE;
+      if (dock) setRobotPos({ x: dock.x, y: dock.y });
+      return;
+    }
+    if (chargingTravelActive) {
+      // If we already snapped to the dock locally or the backend reports the dock,
+      // never (re)start a local charge-trip animation.
+      if (localChargeArrived || robotLocation === "ZONE_CHARGE") {
+        setChargingTrip(false);
+        setChargingOrigin(null);
+        return;
+      }
+      const origin = chargingOrigin || lastRobotLocationRef.current || lastCompletedDrop || robotLocation;
+      if (origin && origin !== "ZONE_CHARGE") {
+        setChargingTrip(true);
+        setChargingOrigin(origin);
+        const originNode = ZONE_NODES[origin];
+        if (originNode) setRobotPos({ x: originNode.x, y: originNode.y });
+        return;
+      }
+    }
+
+    if (hasPendingTasks && !chargingTrip && !lowBattery && !chargingTravelActive) {
+      setChargingTrip(false);
+      setChargingOrigin(null);
+      const location = robotLocation || "ZONE_CHARGE";
+      const node = ZONE_NODES[location] || ZONE_NODES.ZONE_CHARGE;
+      setRobotPos(node ? { x: node.x, y: node.y } : null);
+      return;
+    }
+
+    const location = robotLocation || "ZONE_CHARGE";
+    const prevLocation = lastRobotLocationRef.current;
+    if (
+      shouldShowChargeTrip &&
+      location === "ZONE_CHARGE" &&
+      prevLocation &&
+      prevLocation !== "ZONE_CHARGE" &&
+      lastChargeOriginRef.current !== prevLocation
+    ) {
+      lastChargeOriginRef.current = prevLocation;
+      setChargingTrip(true);
+      setChargingOrigin(prevLocation);
+      const originNode = ZONE_NODES[prevLocation];
+      if (originNode) setRobotPos({ x: originNode.x, y: originNode.y });
+      return;
+    }
 
     if (shouldShowChargeTrip && location !== "ZONE_CHARGE") {
       if (lastCompletedTaskId) lastChargeAnimatedForRef.current = lastCompletedTaskId;
@@ -320,18 +569,81 @@ export default function SimulationView() {
     setChargingOrigin(null);
     const node = ZONE_NODES[location] || ZONE_NODES.ZONE_CHARGE;
     setRobotPos(node ? { x: node.x, y: node.y } : null);
-  }, [robot?.location, shouldShowChargeTrip, lastCompletedDrop, lastCompletedTaskId, lastChargeCompletedId]);
+  }, [
+    robotLocation,
+    shouldShowChargeTrip,
+    lastCompletedDrop,
+    lastCompletedTaskId,
+    lastChargeCompletedId,
+    hasPendingTasks,
+    chargingTravelActive,
+    lowBattery,
+    chargingOrigin,
+    chargingTrip,
+    localChargeArrived
+  ]);
 
   useEffect(() => {
     if (isMoving || chargingTrip) return;
-    const location = robot?.location || "ZONE_CHARGE";
+    if (localChargeArrived) {
+      const dock = ZONE_NODES.ZONE_CHARGE;
+      if (dock) setRobotPos({ x: dock.x, y: dock.y });
+      motionProgressRef.current = 0;
+      return;
+    }
+    const location = robotLocation || "ZONE_CHARGE";
     const node = ZONE_NODES[location] || ZONE_NODES.ZONE_CHARGE;
     setRobotPos(node ? { x: node.x, y: node.y } : null);
     motionProgressRef.current = 0;
-  }, [robot?.location, isMoving, chargingTrip]);
+  }, [robotLocation, isMoving, chargingTrip]);
 
   const rafRef = useRef(null);
   const startRef = useRef(null);
+  const prevChargingTripRef = useRef(false);
+  const lastBatteryLevelRef = useRef(null);
+
+  useEffect(() => {
+    const currentBattery = Number(robot?.batteryLevel);
+    if (!Number.isFinite(currentBattery)) return;
+    const prevBattery = lastBatteryLevelRef.current;
+    lastBatteryLevelRef.current = currentBattery;
+    if (prevBattery == null) return;
+
+    // If the backend reports battery increasing, it is already charging at the dock.
+    // Treat that signal as authoritative even if the FSM state lags, and stop any
+    // pending charge-trip animation so the UI shows "Charging" instead of
+    // repeatedly replaying "Heading to charge" from the last location.
+    const chargingNow = currentBattery > prevBattery;
+    if (!chargingNow) return;
+
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    const dock = ZONE_NODES.ZONE_CHARGE;
+    if (dock) setRobotPos({ x: dock.x, y: dock.y });
+    setLocalChargeArrived(true);
+    setChargingTrip(false);
+    setChargingOrigin(null);
+    motionProgressRef.current = 0;
+    progressRef.current = 0;
+    setProgressPct(0);
+  }, [robot?.batteryLevel]);
+
+  useEffect(() => {
+    // Backend can report arrival at the dock (and start charging) before the
+    // local charge-trip animation completes (e.g., if the user slows the UI
+    // speed). In that case, stop animating immediately and snap to the dock.
+    if (!chargingTrip) return;
+    if (robotLocation !== "ZONE_CHARGE") return;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    const dock = ZONE_NODES.ZONE_CHARGE;
+    if (dock) setRobotPos({ x: dock.x, y: dock.y });
+    setChargingTrip(false);
+    setChargingOrigin(null);
+    motionProgressRef.current = 0;
+    progressRef.current = 0;
+    setProgressPct(0);
+  }, [robotLocation, chargingTrip]);
 
   function runAnimation(segments, total, speed, onComplete, initialDistance = 0) {
     if (!segments.length || total <= 0) return;
@@ -345,6 +657,10 @@ export default function SimulationView() {
       const elapsed = (ts - startRef.current) / 1000;
       const distance = Math.min(total, startDistance + elapsed * speed);
       motionProgressRef.current = total > 0 ? distance / total : 0;
+      if (Math.abs(motionProgressRef.current - progressRef.current) >= 0.01 || distance >= total) {
+        progressRef.current = motionProgressRef.current;
+        setProgressPct(progressRef.current);
+      }
       const pos = positionAlong(segments, total, distance);
       if (pos) setRobotPos(pos);
       if (distance < total) {
@@ -358,24 +674,134 @@ export default function SimulationView() {
   }
 
   useEffect(() => {
+    progressRef.current = 0;
+    setProgressPct(0);
+  }, [movePhase, chargingTrip, activeTask?.id]);
+
+  useEffect(() => {
+    const wasCharging = prevChargingTripRef.current;
+    prevChargingTripRef.current = Boolean(chargingTrip);
+    if (!chargingTrip || wasCharging) return;
+    motionProgressRef.current = 0;
+    progressRef.current = 0;
+    setProgressPct(0);
+  }, [chargingTrip]);
+
+  useEffect(() => {
+    setSimElapsed(0);
+  }, [activeTask?.id, chargingTrip]);
+
+  useEffect(() => {
+    const travelingToCharge = Boolean(chargingTrip) && progressPct < 1;
+    if ((isMoving || travelingToCharge) && !simulationPaused) {
+      const t = setInterval(() => setSimElapsed((prev) => prev + 1), 1000);
+      return () => clearInterval(t);
+    }
+  }, [isMoving, chargingTrip, progressPct, simulationPaused]);
+
+  useEffect(() => {
+    // Once backend confirms we're at the dock, clear local override.
+    if (robotLocation === "ZONE_CHARGE" && localChargeArrived) {
+      setLocalChargeArrived(false);
+    }
+  }, [robotLocation, localChargeArrived]);
+
+  useEffect(() => {
     if (simulationPaused) return;
-    if (robot?.currentState !== ROBOT_STATES.MOVING) return;
+    const isTaskTrip = robot?.currentState === ROBOT_STATES.MOVING;
+    const isChargeTrip = Boolean(chargingTrip);
+    if (!isTaskTrip && !isChargeTrip) return;
+
+    if (isChargeTrip) {
+      // If backend already shows we are docked, never start another
+      // charge-trip animation (avoids repeated fast 'snap-move' loops).
+      if (robotLocation === "ZONE_CHARGE") {
+        setChargingTrip(false);
+        setChargingOrigin(null);
+        return;
+      }
+      if (hasPendingTasks && !lowBattery && !chargingTravelActive) {
+        setChargingTrip(false);
+        setChargingOrigin(null);
+        return;
+      }
+
+      const start =
+        chargingOrigin ||
+        (robotLocation && robotLocation !== "ZONE_CHARGE" ? robotLocation : null) ||
+        lastCompletedDrop;
+      if (!start || start === "ZONE_CHARGE") return;
+
+      const pathToCharge = findPath(start, "ZONE_CHARGE");
+      const animSegments = buildSegments(pathToCharge);
+      if (!animSegments.segments.length || animSegments.total <= 0) return;
+
+      const initialDistance = motionProgressRef.current * animSegments.total;
+
+      // Use consistent distance-based timing for the charge trip to avoid mid-route slowdowns.
+      const chargeUnits = getGraphDistance(pathToCharge);
+      const travelSeconds = chargeUnits * CHARGE_TRAVEL_SECONDS_PER_UNIT;
+      const speed = travelSeconds > 0 ? (animSegments.total / travelSeconds) * speedMultiplier : 40 * speedMultiplier;
+
+      runAnimation(animSegments.segments, animSegments.total, speed, () => {
+        motionProgressRef.current = 1;
+        progressRef.current = 1;
+        setProgressPct(1);
+        if (lastCompletedTaskId) {
+          try {
+            localStorage.setItem("simulation.lastChargeCompletedId", lastCompletedTaskId);
+          } catch {
+            // ignore
+          }
+          setLastChargeCompletedId(lastCompletedTaskId);
+        }
+      }, initialDistance);
+
+      return () => {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      };
+    }
+
     if (!segmentsInfo.segments.length || segmentsInfo.total <= 0) return;
 
-    const speed = 60; // px/sec
+    const speed = 60 * speedMultiplier; // px/sec
     setTaskTripComplete(false);
 
     const segmentsForPhase = movePhase === "toDrop" ? buildSegments(pathToDrop) : buildSegments(pathToPickup);
-    if (!segmentsForPhase.segments.length || segmentsForPhase.total <= 0) return;
+
+    if (movePhase === "toPickup") {
+      if (!pickup || pickupIndex < 0) {
+        setMovePhase("toDrop");
+        return;
+      }
+      if (!segmentsForPhase.segments.length || segmentsForPhase.total <= 0) {
+        setPickupHold(true);
+        setMovePhase("toDrop");
+        setSimulationPaused(true);
+        motionProgressRef.current = 0;
+        progressRef.current = 0;
+        setProgressPct(0);
+        return;
+      }
+    }
+
+    if (movePhase === "toDrop" && (!segmentsForPhase.segments.length || segmentsForPhase.total <= 0)) {
+      setTaskTripComplete(true);
+      return;
+    }
 
     const initialDistance = motionProgressRef.current * segmentsForPhase.total;
     runAnimation(segmentsForPhase.segments, segmentsForPhase.total, speed, () => {
       motionProgressRef.current = 1;
+      progressRef.current = 1;
+      setProgressPct(1);
       if (movePhase === "toPickup" && pickup) {
         setPickupHold(true);
         setMovePhase("toDrop");
         setSimulationPaused(true);
         motionProgressRef.current = 0;
+        progressRef.current = 0;
+        setProgressPct(0);
       } else {
         setTaskTripComplete(true);
       }
@@ -384,43 +810,156 @@ export default function SimulationView() {
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [robot?.currentState, segmentsInfo, simulationPaused, movePhase, pickup, pathToPickup, pathToDrop]);
+  }, [robot?.currentState, segmentsInfo, simulationPaused, movePhase, pickup, pickupIndex, pathToPickup, pathToDrop, speedMultiplier, chargingTrip, robotLocation, chargingOrigin, lastCompletedDrop, lastCompletedTaskId, hasPendingTasks, lowBattery, chargingTravelActive, robot?.chargingUntil]);
 
+  // Ensure the robot icon snaps to the dock locally as soon as the charge trip animation completes
+  // instead of waiting for the next backend refresh tick.
   useEffect(() => {
-    if (simulationPaused) return;
     if (!chargingTrip) return;
-    const start = chargingOrigin || robot?.location || lastCompletedDrop;
-    if (!start || start === "ZONE_CHARGE") return;
-
-    const pathToCharge = findPath(start, "ZONE_CHARGE");
-    const animSegments = buildSegments(pathToCharge);
-    if (!animSegments.segments.length || animSegments.total <= 0) return;
-
-    const speed = 40; // px/sec
-    const initialDistance = motionProgressRef.current * animSegments.total;
-    runAnimation(animSegments.segments, animSegments.total, speed, () => {
-      setChargingTrip(false);
-      setChargingOrigin(null);
-      motionProgressRef.current = 1;
-      if (lastCompletedTaskId) {
-        try {
-          localStorage.setItem("simulation.lastChargeCompletedId", lastCompletedTaskId);
-        } catch {
-          // ignore
-        }
-        setLastChargeCompletedId(lastCompletedTaskId);
-      }
-    }, initialDistance);
-
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    };
-  }, [chargingTrip, robot?.location, simulationPaused, chargingOrigin, lastCompletedDrop, lastCompletedTaskId]);
+    if (progressPct < 1) return;
+    const dock = ZONE_NODES.ZONE_CHARGE;
+    if (dock) setRobotPos({ x: dock.x, y: dock.y });
+    // Treat the robot as arrived at the dock immediately so the UI switches to
+    // charging state without waiting for the next backend refresh tick.
+    setLocalChargeArrived(true);
+    setChargingTrip(false);
+    setChargingOrigin(null);
+  }, [chargingTrip, progressPct]);
 
   useEffect(() => {
     if (!simulationPaused || !pickupHold || robot?.currentState !== ROBOT_STATES.MOVING) return;
     // waiting at pickup until operator resumes
   }, [simulationPaused, pickupHold, robot?.currentState]);
+
+  const activePhaseSegments = chargingTrip ? chargeSegments : movePhase === "toDrop" ? dropSegments : pickupSegments;
+  const activeSpeed = chargingTrip ? 40 * speedMultiplier : 60 * speedMultiplier;
+  const remainingDistance = activePhaseSegments.total > 0 ? Math.max(0, (1 - progressPct) * activePhaseSegments.total) : 0;
+  const etaSeconds = activeSpeed > 0 ? Math.ceil(remainingDistance / activeSpeed) : null;
+  const atDock = atDockEffective;
+  const progressLabel = atDock
+    ? batteryLevel < 100
+      ? "Charging"
+      : "Idle at dock"
+    : chargingTrip
+      ? "Heading to charge"
+      : movePhase === "toPickup"
+        ? "To pickup"
+        : "To drop";
+  const progressPercentLabel = `${Math.round(progressPct * 100)}%`;
+  const povTime = new Date().toLocaleTimeString();
+  const povTarget = robotPos || ZONE_NODES.ZONE_CHARGE;
+  const povCenterX = povTarget?.x ?? 0;
+  const povCenterY = povTarget?.y ?? 0;
+  const povTranslateX = 490 - povCenterX * povZoom;
+  const povTranslateY = 280 - povCenterY * povZoom;
+  const nextWaypoint = chargingTrip ? "ZONE_CHARGE" : movePhase === "toPickup" ? pickup : drop;
+  const nextWaypointLabel = nextWaypoint && ZONE_NODES[nextWaypoint] ? ZONE_NODES[nextWaypoint].label : "—";
+
+  const renderWarehouseContent = (variant = "main") => (
+    <>
+      {ZONE_EDGES.map(([from, to]) => {
+        const start = ZONE_NODES[from];
+        const end = ZONE_NODES[to];
+        const highlighted = (variant === "main" ? showPath : true) && pathEdges.has(edgeKey(from, to));
+        return (
+          <line
+            key={`${variant}-${from}-${to}`}
+            x1={start.x}
+            y1={start.y}
+            x2={end.x}
+            y2={end.y}
+            stroke={highlighted ? "#22d3ee" : "rgba(148,163,184,0.25)"}
+            strokeWidth={highlighted ? 4 : 2}
+            strokeDasharray={highlighted && isMoving ? "8 6" : "0"}
+            className={highlighted && isMoving ? "animate-dash" : ""}
+            strokeLinecap="round"
+          />
+        );
+      })}
+
+      {Object.entries(ZONE_NODES).map(([zone, node]) => {
+        const isPickup = zone === pickup;
+        const isDrop = zone === drop;
+        const isCharge = zone === "ZONE_CHARGE";
+        const fill = isPickup ? "#60a5fa" : isDrop ? "#34d399" : isCharge ? "#f59e0b" : "#0f172a";
+        const stroke = isPickup || isDrop || isCharge ? "#f8fafc" : "#475569";
+        return (
+          <g key={`${variant}-${zone}`}>
+            <rect x={node.x - 32} y={node.y - 22} width={64} height={44} rx={10} fill={fill} stroke={stroke} strokeWidth={2} filter="url(#softGlow)" />
+            <text x={node.x} y={node.y + 4} fontSize="11" textAnchor="middle" fill="#e2e8f0" fontWeight="800">
+              {node.label}
+            </text>
+            {isPickup ? (
+              <g transform={`translate(${node.x - 36}, ${node.y - 52})`}>
+                <rect x="0" y="0" width="72" height="18" rx="8" fill="rgba(59,130,246,0.9)" />
+                <text x="36" y="12" textAnchor="middle" fontSize="9" fill="#e2e8f0" fontWeight="800">
+                  PICKUP
+                </text>
+              </g>
+            ) : null}
+            {isDrop ? (
+              <g transform={`translate(${node.x - 32}, ${node.y + 30})`}>
+                <rect x="0" y="0" width="64" height="18" rx="8" fill="rgba(16,185,129,0.9)" />
+                <text x="32" y="12" textAnchor="middle" fontSize="9" fill="#e2e8f0" fontWeight="800">
+                  DROP
+                </text>
+              </g>
+            ) : null}
+          </g>
+        );
+      })}
+
+      {robotPos ? (
+        <g>
+          <circle cx={robotPos.x} cy={robotPos.y} r={28} fill="url(#robotGlow)" opacity="0.85" />
+          <circle
+            cx={robotPos.x}
+            cy={robotPos.y}
+            r={14}
+            fill={isCharging ? "#f59e0b" : isMoving ? "#38bdf8" : isFullBattery ? "#22c55e" : "#2563eb"}
+            stroke="#e2e8f0"
+            strokeWidth={2}
+            filter="url(#softGlow)"
+          />
+          <g transform={`translate(${robotPos.x - 8}, ${robotPos.y - 8})`}>
+            <rect x="0" y="2" width="16" height="10" rx="3" fill="rgba(15,23,42,0.9)" />
+            <rect x="2" y="0" width="12" height="6" rx="2" fill="rgba(226,232,240,0.9)" />
+          </g>
+          {(isCharging || isMoving) && (
+            <circle
+              cx={robotPos.x}
+              cy={robotPos.y}
+              r={24}
+              fill="transparent"
+              stroke={isCharging ? "rgba(245,158,11,0.8)" : "rgba(56,189,248,0.8)"}
+              strokeWidth={2}
+              className="animate-pulse-ring"
+            />
+          )}
+          {variant === "main" ? (
+            <g transform={`translate(${robotPos.x + 18}, ${robotPos.y - 26})`}>
+              <rect x="0" y="0" width="110" height="28" rx="8" fill="rgba(15,23,42,0.9)" stroke="rgba(148,163,184,0.35)" />
+              <text x="55" y="18" textAnchor="middle" fontSize="11" fill="#e2e8f0" fontWeight="700">
+                {activeTask?.status === "IN_PROGRESS"
+                  ? taskTripComplete
+                    ? "Route complete"
+                    : pickupHold
+                      ? "Waiting pickup"
+                      : simulationPaused
+                        ? "Paused"
+                        : "En route"
+                  : chargingTrip
+                    ? simulationPaused
+                      ? "Charging paused"
+                      : "Heading to charge"
+                    : robot?.currentState || "IDLE"}
+              </text>
+            </g>
+          ) : null}
+        </g>
+      ) : null}
+    </>
+  );
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900">
@@ -513,14 +1052,21 @@ export default function SimulationView() {
                 <div className="text-xs text-slate-400">Robot dot follows the planned path.</div>
               </div>
               <div className="flex items-center gap-2">
-                
+
                 <Button
                   variant="secondary"
                   onClick={handleStart}
-                  disabled={!activeTask || activeTask.status !== "ASSIGNED" || acting}
+                  disabled={
+                    !activeTask ||
+                    acting ||
+                    !(
+                      activeTask.status === "ASSIGNED" ||
+                      (activeTask.status === "IN_PROGRESS" && robot?.currentState !== ROBOT_STATES.MOVING)
+                    )
+                  }
                 >
                   <Play className="h-4 w-4" />
-                  Start
+                  {activeTask?.status === "IN_PROGRESS" ? "Resume" : "Start"}
                 </Button>
                 <Button
                   variant="secondary"
@@ -543,6 +1089,43 @@ export default function SimulationView() {
               </div>
             </div>
 
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <div className="text-[11px] text-slate-400">Playback speed</div>
+                <div className="mt-2 flex items-center gap-3">
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="2"
+                    step="0.25"
+                    value={speedMultiplier}
+                    onChange={(event) => setSpeedMultiplier(Number(event.target.value))}
+                    className="h-2 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-cyan-400"
+                  />
+                  <div className="text-xs font-semibold text-slate-200">{speedMultiplier}x</div>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <div className="text-[11px] text-slate-400">Path highlight</div>
+                <div className="mt-2 flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => setShowPath((prev) => !prev)}
+                    className="px-3 py-2 text-xs"
+                  >
+                    {showPath ? "Visible" : "Hidden"}
+                  </Button>
+                  <span className="text-xs text-slate-400">Toggle route focus.</span>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <div className="text-[11px] text-slate-400">Session timer</div>
+                <div className="mt-2 text-sm font-semibold text-slate-100">
+                  {formatSeconds(simElapsed)}
+                </div>
+              </div>
+            </div>
+
             <div className="mt-4">
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <span
@@ -560,7 +1143,7 @@ export default function SimulationView() {
                   {isMoving ? "MOVING" : isCharging ? "CHARGING" : isFullBattery ? "FULL" : robot?.currentState || "IDLE"}
                 </span>
                 <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-bold text-slate-200">
-                  Battery {Number.isFinite(batteryLevel) ? `${batteryLevel}%` : "—"}
+                  Battery {Number.isFinite(displayBatteryLevel) ? `${displayBatteryLevel}%` : "—"}
                 </span>
               </div>
 
@@ -579,108 +1162,102 @@ export default function SimulationView() {
                       </feMerge>
                     </filter>
                   </defs>
-                {ZONE_EDGES.map(([from, to]) => {
-                  const start = ZONE_NODES[from];
-                  const end = ZONE_NODES[to];
-                  const highlighted = pathEdges.has(edgeKey(from, to));
-                  return (
-                    <line
-                      key={`${from}-${to}`}
-                      x1={start.x}
-                      y1={start.y}
-                      x2={end.x}
-                      y2={end.y}
-                      stroke={highlighted ? "#22d3ee" : "rgba(148,163,184,0.25)"}
-                      strokeWidth={highlighted ? 4 : 2}
-                      strokeDasharray={highlighted && isMoving ? "8 6" : "0"}
-                      className={highlighted && isMoving ? "animate-dash" : ""}
-                      strokeLinecap="round"
-                    />
-                  );
-                })}
-
-                {Object.entries(ZONE_NODES).map(([zone, node]) => {
-                  const isPickup = zone === pickup;
-                  const isDrop = zone === drop;
-                  const isCharge = zone === "ZONE_CHARGE";
-                  const fill = isPickup ? "#60a5fa" : isDrop ? "#34d399" : isCharge ? "#f59e0b" : "#0f172a";
-                  const stroke = isPickup || isDrop || isCharge ? "#f8fafc" : "#475569";
-                  return (
-                    <g key={zone}>
-                      <rect x={node.x - 32} y={node.y - 22} width={64} height={44} rx={10} fill={fill} stroke={stroke} strokeWidth={2} filter="url(#softGlow)" />
-                      <text x={node.x} y={node.y + 4} fontSize="11" textAnchor="middle" fill="#e2e8f0" fontWeight="800">
-                        {node.label}
-                      </text>
-                      {isPickup ? (
-                        <g transform={`translate(${node.x - 36}, ${node.y - 52})`}>
-                          <rect x="0" y="0" width="72" height="18" rx="8" fill="rgba(59,130,246,0.9)" />
-                          <text x="36" y="12" textAnchor="middle" fontSize="9" fill="#e2e8f0" fontWeight="800">
-                            PICKUP
-                          </text>
-                        </g>
-                      ) : null}
-                      {isDrop ? (
-                        <g transform={`translate(${node.x - 32}, ${node.y + 30})`}>
-                          <rect x="0" y="0" width="64" height="18" rx="8" fill="rgba(16,185,129,0.9)" />
-                          <text x="32" y="12" textAnchor="middle" fontSize="9" fill="#e2e8f0" fontWeight="800">
-                            DROP
-                          </text>
-                        </g>
-                      ) : null}
-                    </g>
-                  );
-                })}
-
-                {robotPos ? (
-                  <g>
-                    <circle cx={robotPos.x} cy={robotPos.y} r={28} fill="url(#robotGlow)" opacity="0.85" />
-                    <circle
-                      cx={robotPos.x}
-                      cy={robotPos.y}
-                      r={14}
-                      fill={isCharging ? "#f59e0b" : isMoving ? "#38bdf8" : isFullBattery ? "#22c55e" : "#2563eb"}
-                      stroke="#e2e8f0"
-                      strokeWidth={2}
-                      filter="url(#softGlow)"
-                    />
-                    <g transform={`translate(${robotPos.x - 8}, ${robotPos.y - 8})`}>
-                      <rect x="0" y="2" width="16" height="10" rx="3" fill="rgba(15,23,42,0.9)" />
-                      <rect x="2" y="0" width="12" height="6" rx="2" fill="rgba(226,232,240,0.9)" />
-                    </g>
-                    {(isCharging || isMoving) && (
-                      <circle
-                        cx={robotPos.x}
-                        cy={robotPos.y}
-                        r={24}
-                        fill="transparent"
-                        stroke={isCharging ? "rgba(245,158,11,0.8)" : "rgba(56,189,248,0.8)"}
-                        strokeWidth={2}
-                        className="animate-pulse-ring"
-                      />
-                    )}
-                    <g transform={`translate(${robotPos.x + 18}, ${robotPos.y - 26})`}>
-                      <rect x="0" y="0" width="110" height="28" rx="8" fill="rgba(15,23,42,0.9)" stroke="rgba(148,163,184,0.35)" />
-                      <text x="55" y="18" textAnchor="middle" fontSize="11" fill="#e2e8f0" fontWeight="700">
-                        {activeTask?.status === "IN_PROGRESS"
-                          ? taskTripComplete
-                            ? "Route complete"
-                            : pickupHold
-                              ? "Waiting pickup"
-                              : simulationPaused
-                                ? "Paused"
-                                : "En route"
-                          : chargingTrip
-                            ? simulationPaused
-                              ? "Charging paused"
-                              : "Heading to charge"
-                            : robot?.currentState || "IDLE"}
-                      </text>
-                    </g>
-                  </g>
-                ) : null}
+                {renderWarehouseContent("main")}
                 </svg>
               </div>
             </div>
+
+            <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <div className="flex items-center justify-between text-[11px] text-slate-300">
+                <span className="font-semibold text-slate-100">{progressLabel}</span>
+                <span>{progressPercentLabel}</span>
+              </div>
+              <div className="mt-2 h-2 w-full rounded-full bg-white/10">
+                <div
+                  className="h-2 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500"
+                  style={{ width: `${Math.max(0, Math.min(100, progressPct * 100))}%` }}
+                />
+              </div>
+              <div className="mt-2 grid gap-2 text-[11px] text-slate-400 sm:grid-cols-3">
+                <span>
+                  ETA: {(isMoving || chargingTrip) && activePhaseSegments.total > 0 ? formatSeconds(etaSeconds) : "—"}
+                </span>
+                <span>
+                  Remaining: {(isMoving || chargingTrip) && activePhaseSegments.total > 0 ? `${Math.round(remainingDistance)} px` : "—"}
+                </span>
+                <span>
+                  Phase: {(isMoving || chargingTrip) ? progressLabel : "—"}
+                </span>
+              </div>
+            </div>
+
+            {showPov ? (
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-extrabold text-white">Robot-eye POV</div>
+                    <div className="text-xs text-slate-400">First-person camera view (simulated).</div>
+                  </div>
+                  <div className="text-xs font-semibold text-slate-300">{povTime}</div>
+                </div>
+                <div className="mt-3 relative overflow-hidden rounded-2xl border border-white/10 bg-slate-950/60">
+                  <svg viewBox="0 0 980 560" className="h-[260px] w-full">
+                    <defs>
+                      <radialGradient id="robotGlow" cx="50%" cy="50%" r="50%">
+                        <stop offset="0%" stopColor={isCharging ? "#f59e0b" : isMoving ? "#38bdf8" : "#22c55e"} stopOpacity="0.9" />
+                        <stop offset="100%" stopColor="transparent" />
+                      </radialGradient>
+                      <filter id="softGlow">
+                        <feGaussianBlur stdDeviation="6" result="blur" />
+                        <feMerge>
+                          <feMergeNode in="blur" />
+                          <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                      </filter>
+                      <radialGradient id="povVignette" cx="50%" cy="50%" r="60%">
+                        <stop offset="0%" stopColor="rgba(0,0,0,0)" />
+                        <stop offset="100%" stopColor="rgba(0,0,0,0.65)" />
+                      </radialGradient>
+                      <pattern id="scanlines" width="4" height="4" patternUnits="userSpaceOnUse">
+                        <rect width="4" height="2" fill="rgba(148,163,184,0.08)" />
+                        <rect y="2" width="4" height="2" fill="rgba(2,6,23,0)" />
+                      </pattern>
+                      <filter id="povGlow">
+                        <feGaussianBlur stdDeviation="2" result="blur" />
+                        <feMerge>
+                          <feMergeNode in="blur" />
+                          <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                      </filter>
+                    </defs>
+                    <g transform={`translate(${povTranslateX} ${povTranslateY}) scale(${povZoom})`}>
+                      {renderWarehouseContent("pov")}
+                    </g>
+                    <rect x="0" y="0" width="980" height="560" fill="url(#scanlines)" opacity="0.45" />
+                    <rect x="0" y="0" width="980" height="560" fill="url(#povVignette)" />
+                    <g filter="url(#povGlow)">
+                      <rect x="18" y="18" width="240" height="72" rx="12" fill="rgba(15,23,42,0.7)" stroke="rgba(148,163,184,0.25)" />
+                      <text x="36" y="42" fontSize="12" fill="#e2e8f0" fontWeight="800">POV</text>
+                      <text x="36" y="62" fontSize="11" fill="#94a3b8">Battery</text>
+                      <text x="110" y="62" fontSize="11" fill="#e2e8f0" fontWeight="700">{displayBatteryLevel}%</text>
+                      <text x="36" y="80" fontSize="11" fill="#94a3b8">Next</text>
+                      <text x="110" y="80" fontSize="11" fill="#e2e8f0" fontWeight="700">{nextWaypointLabel}</text>
+                    </g>
+                    <g filter="url(#povGlow)">
+                      <rect x="720" y="18" width="242" height="72" rx="12" fill="rgba(15,23,42,0.7)" stroke="rgba(148,163,184,0.25)" />
+                      <text x="740" y="42" fontSize="11" fill="#94a3b8">Speed</text>
+                      <text x="820" y="42" fontSize="11" fill="#e2e8f0" fontWeight="700">{activeSpeed.toFixed(0)} px/s</text>
+                      <text x="740" y="62" fontSize="11" fill="#94a3b8">ETA</text>
+                      <text x="820" y="62" fontSize="11" fill="#e2e8f0" fontWeight="700">
+                        {(isMoving || chargingTrip) && activePhaseSegments.total > 0 ? formatSeconds(etaSeconds) : "—"}
+                      </text>
+                      <text x="740" y="80" fontSize="11" fill="#94a3b8">Phase</text>
+                      <text x="820" y="80" fontSize="11" fill="#e2e8f0" fontWeight="700">{progressLabel}</text>
+                    </g>
+                  </svg>
+                </div>
+              </div>
+            ) : null}
 
             <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-slate-300">
               <span className="inline-flex items-center gap-2">
@@ -727,7 +1304,7 @@ export default function SimulationView() {
               <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
                 <div className="text-[11px] text-slate-400">Battery</div>
                 <div className="text-sm font-semibold text-slate-100">
-                  {typeof robot?.batteryLevel === "number" ? `${robot.batteryLevel}%` : "—"}
+                  {Number.isFinite(displayBatteryLevel) ? `${displayBatteryLevel}%` : "—"}
                 </div>
               </div>
               <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
@@ -766,6 +1343,23 @@ export default function SimulationView() {
                       : "—"}
                 </div>
               </div>
+                <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                  <div className="text-[11px] text-slate-400">Queued tasks</div>
+                  {queuedTasks.length ? (
+                    <ul className="mt-2 space-y-1 text-xs text-slate-200">
+                      {queuedTasks.map((task) => (
+                        <li key={task.id || task._id} className="flex items-center justify-between">
+                          <span className="font-semibold">{task.id || task._id}</span>
+                          <span className="text-slate-400">
+                            {task.pickup_zone} → {task.drop_zone}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="mt-2 text-xs text-slate-500">No queued tasks.</div>
+                  )}
+                </div>
             </div>
           </div>
         </div>

@@ -85,6 +85,7 @@ export function getShortestPath(graph, start, end) {
   return { distance: finalDistance, path };
 }
 
+
 export const WAREHOUSE_GRAPH_META = Object.freeze({
   zones: WAREHOUSE_ZONES,
   edges: WAREHOUSE_EDGES

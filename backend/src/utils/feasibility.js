@@ -3,7 +3,14 @@ import { getShortestPath } from "./warehouseGraph.js";
 export const BATTERY_PER_UNIT = 2;
 export const MAX_PAYLOAD_LIMIT = 5;
 
-export function analyzeFeasibility({ task, robot, graph, batteryPerUnit = BATTERY_PER_UNIT }) {
+export function analyzeFeasibility({
+  task,
+  robot,
+  graph,
+  batteryPerUnit = BATTERY_PER_UNIT,
+  includeChargeReserve = false,
+  chargeZoneCode = "ZONE_CHARGE"
+}) {
   const weight = Number(task?.weight ?? 0);
   const rawMaxPayload = Number(robot?.maxPayload);
   const maxPayload = Number.isFinite(rawMaxPayload) ? Math.min(rawMaxPayload, MAX_PAYLOAD_LIMIT) : MAX_PAYLOAD_LIMIT;
@@ -19,9 +26,9 @@ export function analyzeFeasibility({ task, robot, graph, batteryPerUnit = BATTER
     };
   }
 
-  const pickup = task?.pickup_zone;
-  const drop = task?.drop_zone;
-  const start = robot?.location || "ZONE_CHARGE";
+  const pickup = task?.pickup_zone_id?.code || task?.pickup_zone || null;
+  const drop = task?.drop_zone_id?.code || task?.drop_zone || null;
+  const start = robot?.location_zone_id?.code || robot?.location || "ZONE_CHARGE";
 
   const toPickup = getShortestPath(graph, start, pickup) || {
     distance: 0,
@@ -42,13 +49,25 @@ export function analyzeFeasibility({ task, robot, graph, batteryPerUnit = BATTER
   const requiredBattery = distance * batteryPerUnit;
   const battery = Number(robot?.batteryLevel ?? 0);
 
-  if (battery < requiredBattery) {
+  const dropToCharge = includeChargeReserve
+    ? getShortestPath(graph, drop, chargeZoneCode) || { distance: 0, path: [drop, chargeZoneCode].filter(Boolean) }
+    : { distance: 0, path: [] };
+  const reserveDistance = Number(dropToCharge?.distance ?? 0);
+  const reserveBattery = reserveDistance * batteryPerUnit;
+  const totalRequiredBattery = includeChargeReserve ? requiredBattery + reserveBattery : requiredBattery;
+
+  if (battery < totalRequiredBattery) {
     return {
       feasible: false,
-      reason: "Insufficient battery for task",
+      reason: includeChargeReserve
+        ? "Insufficient battery: cannot complete task and still reach charging station after drop"
+        : "Insufficient battery for task",
       details: {
         distance,
         requiredBattery,
+        reserveDistance: includeChargeReserve ? reserveDistance : 0,
+        reserveBattery: includeChargeReserve ? reserveBattery : 0,
+        totalRequiredBattery,
         battery,
         path: mergedPath,
         start,
@@ -67,6 +86,9 @@ export function analyzeFeasibility({ task, robot, graph, batteryPerUnit = BATTER
     details: {
       distance,
       requiredBattery,
+      reserveDistance: includeChargeReserve ? reserveDistance : 0,
+      reserveBattery: includeChargeReserve ? reserveBattery : 0,
+      totalRequiredBattery,
       battery,
       path: mergedPath,
       start,
@@ -78,4 +100,11 @@ export function analyzeFeasibility({ task, robot, graph, batteryPerUnit = BATTER
       maxPayload
     }
   };
+}
+
+// Always include the reserve needed to return to the charging dock.
+// Using this helper avoids accidentally accepting tasks that would
+// leave the robot stranded after drop-off.
+export function analyzeFeasibilityWithReserve(options) {
+  return analyzeFeasibility({ ...options, includeChargeReserve: true });
 }

@@ -1,6 +1,14 @@
 import { Bot, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 
+const PARTICLES = Array.from({ length: 20 }).map(() => {
+  const left = Math.random() * 100;
+  const top = Math.random() * 100;
+  const animationDelay = Math.random() * 5;
+  const animationDuration = 5 + Math.random() * 10;
+  return { left, top, animationDelay, animationDuration };
+});
+
 export function AuthShell({
   children,
   productName = "TransBot",
@@ -48,15 +56,15 @@ export function AuthShell({
 
       {/* Floating particles */}
       <div className="pointer-events-none absolute inset-0">
-        {[...Array(20)].map((_, i) => (
+        {PARTICLES.map((p, i) => (
           <div
             key={i}
             className="absolute h-1 w-1 rounded-full bg-white/20 animate-float-particle"
             style={{
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-              animationDelay: `${Math.random() * 5}s`,
-              animationDuration: `${5 + Math.random() * 10}s`
+              left: `${p.left}%`,
+              top: `${p.top}%`,
+              animationDelay: `${p.animationDelay}s`,
+              animationDuration: `${p.animationDuration}s`
             }}
           />
         ))}

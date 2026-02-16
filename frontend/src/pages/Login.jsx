@@ -19,19 +19,25 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   async function onSubmit(e) {
     e.preventDefault();
     setError("");
+    setSuccess("");
     setSubmitting(true);
     try {
       const res = await loginUser({ email, password });
-      setAuth({ token: res.token, user: res.user });
-      nav(roleHome(res.user.role), { replace: true });
+      setSuccess("Login successful. Redirecting...");
+      setTimeout(() => {
+        setAuth({ token: res.token, user: res.user });
+        nav(roleHome(res.user.role), { replace: true });
+      }, 1200);
     } catch (err) {
       setError(err.message || "Login failed.");
-    } finally {
       setSubmitting(false);
+    } finally {
+      // keep submitting true on success to prevent duplicate submits during redirect
     }
   }
 
@@ -79,6 +85,12 @@ export default function Login() {
             {error ? (
               <div className="rounded-xl border border-red-500/30 bg-gradient-to-r from-red-500/10 via-rose-500/10 to-red-500/10 px-4 py-3.5 text-sm font-semibold text-red-300 backdrop-blur-sm shadow-lg border-red-500/20">
                 {error}
+              </div>
+            ) : null}
+
+            {success ? (
+              <div className="fixed left-1/2 top-6 z-50 w-[90%] max-w-md -translate-x-1/2 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3.5 text-sm font-semibold text-emerald-200 shadow-lg backdrop-blur">
+                {success}
               </div>
             ) : null}
 

@@ -16,8 +16,7 @@ const EVENT_TYPES = [
   "TASK_ASSIGNED",
   "TASK_REJECTED",
   "TASK_STARTED",
-  "TASK_COMPLETED",
-  "ROBOT_CHARGING_TRIP"
+  "TASK_COMPLETED"
 ];
 
 function formatDuration(ms) {
@@ -33,27 +32,6 @@ function formatDuration(ms) {
 function formatPercent(value) {
   if (!Number.isFinite(value)) return "—";
   return `${(value * 100).toFixed(1)}%`;
-}
-
-function buildCsvReport(metrics, logs) {
-  const lines = [];
-  lines.push("Section,Metric,Value");
-  if (metrics) {
-    lines.push(`Summary,Total Tasks,${metrics.totalTasks ?? 0}`);
-    const byStatus = metrics.byStatus || {};
-    Object.keys(byStatus).forEach((status) => {
-      lines.push(`Status,${status},${byStatus[status]}`);
-    });
-    lines.push(`Durations,Assign to Start,${metrics.avgDurationsMs?.assignToStart ?? 0}`);
-    lines.push(`Durations,Start to Complete,${metrics.avgDurationsMs?.startToComplete ?? 0}`);
-    lines.push(`Durations,Create to Complete,${metrics.avgDurationsMs?.createToComplete ?? 0}`);
-  }
-  lines.push("Logs,Timestamp,Event Type,Description");
-  (logs || []).forEach((log) => {
-    const safeDescription = String(log.description || "").replace(/\n/g, " ").replace(/,/g, ";");
-    lines.push(`Logs,${log.timestamp},${log.event_type},${safeDescription}`);
-  });
-  return lines.join("\n");
 }
 
 function downloadBlob(content, filename, type) {
@@ -133,6 +111,9 @@ export default function AdminAnalytics() {
   const pendingCount = Number(byStatus.PENDING ?? 0);
   const completionRate = totalTasks ? completedCount / totalTasks : 0;
   const avgPerDay = totalTasks && Number(days) ? totalTasks / Number(days) : 0;
+  const filteredLogs = Array.isArray(logs)
+    ? logs.filter((log) => log?.event_type !== "ROBOT_CHARGING_TRIP")
+    : [];
 
   function handleDownloadJson() {
     const payload = {
@@ -141,11 +122,6 @@ export default function AdminAnalytics() {
       logs
     };
     downloadBlob(JSON.stringify(payload, null, 2), "robot-analytics-report.json", "application/json");
-  }
-
-  function handleDownloadCsv() {
-    const csv = buildCsvReport(metrics, logs);
-    downloadBlob(csv, "robot-analytics-report.csv", "text/csv");
   }
 
   return (
@@ -337,10 +313,6 @@ export default function AdminAnalytics() {
                     <Download className="h-4 w-4" />
                     Download JSON
                   </Button>
-                  <Button variant="secondary" onClick={handleDownloadCsv} className="justify-center">
-                    <Download className="h-4 w-4" />
-                    Download CSV
-                  </Button>
                 </div>
               </div>
 
@@ -390,14 +362,14 @@ export default function AdminAnalytics() {
                 </div>
               ) : null}
 
-              <div className="mt-3 text-xs text-slate-400">Showing {logs.length} events on this page.</div>
+              <div className="mt-3 text-xs text-slate-400">Showing {filteredLogs.length} events on this page.</div>
               <div className="mt-4 space-y-3">
                 {logsLoading ? (
                   <div className="text-sm text-slate-400">Loading logs...</div>
-                ) : logs.length === 0 ? (
+                ) : filteredLogs.length === 0 ? (
                   <div className="text-sm text-slate-400">No logs found.</div>
                 ) : (
-                  logs.map((log) => (
+                  filteredLogs.map((log) => (
                     <div key={log.id} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="text-xs font-semibold text-cyan-200">
@@ -420,15 +392,20 @@ export default function AdminAnalytics() {
               <CardTitle>Highlights</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
-                <div className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-                  <ClipboardList className="h-4 w-4 text-cyan-300" />
-                  Timeline coverage
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <div className="text-xs font-semibold text-slate-400">Rejected / Deferred</div>
+                <div className="mt-1 text-lg font-bold text-white">
+                  {rejectedCount + Number(metrics?.deferredBatteryPending ?? 0)}
                 </div>
-                <p className="mt-2 text-xs text-slate-400">
-                  {logs.length} events shown on this page. Use filters to isolate task or robot activity.
-                </p>
+                <div className="text-[11px] font-semibold text-slate-400">
+                  {rejectedCount} rejected, {metrics?.deferredBatteryPending ?? 0} awaiting battery
+                </div>
               </div>
+
+              <p className="mt-2 text-xs text-slate-400">
+                {logs.length} events shown on this page. Use filters to isolate task or robot activity.
+              </p>
+
               <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
                 <div className="text-xs font-semibold text-slate-400">Charging ETA</div>
                 <div className="mt-1 text-lg font-bold text-white">

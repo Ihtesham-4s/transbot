@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { clearAuth, loadAuth, saveAuth } from "../lib/authStorage";
 import { getMe } from "../lib/api";

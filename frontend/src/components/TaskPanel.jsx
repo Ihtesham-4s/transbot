@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, Clock, Play, Search, Sparkles, Truck, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertCircle, CheckCircle2, Clock, Search, Sparkles, Truck, X } from "lucide-react";
 
 import { Button } from "./ui/Button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/Card";
@@ -7,22 +7,22 @@ import { Input } from "./ui/Input";
 import { Select } from "./ui/Select";
 import { cn } from "../lib/cn";
 import {
-  completeTask,
   createTask,
+  getZones,
   getRobot,
   listTasks,
-  startTask,
+  planMission,
   assignTask,
   scheduleNextTask,
   overrideSwapTask
 } from "../lib/api";
 
-const ZONES = [
-  { id: "ZONE_A", label: "Zone A (Receiving)" },
-  { id: "ZONE_B", label: "Zone B (Storage)" },
-  { id: "ZONE_C", label: "Zone C (Packing)" },
-  { id: "ZONE_D", label: "Zone D (Shipping)" },
-  { id: "ZONE_E", label: "Zone E (QA)" },
+const DEFAULT_ZONES = [
+  { code: "ZONE_A", label: "Zone A (Receiving)", type: "PICKUP" },
+  { code: "ZONE_B", label: "Zone B (Storage)", type: "PICKUP" },
+  { code: "ZONE_C", label: "Zone C (Packing)", type: "PICKUP" },
+  { code: "ZONE_D", label: "Zone D (Shipping)", type: "DROPOFF" },
+  { code: "ZONE_E", label: "Zone E (QA)", type: "DROPOFF" }
 ];
 
 function fmtTime(d) {
@@ -55,6 +55,7 @@ export default function TaskPanel({ token, isAdmin }) {
   const [drop_zone, setDropZone] = useState("ZONE_B");
   const [weight, setWeight] = useState(5);
   const [priority, setPriority] = useState("MEDIUM");
+  const [zones, setZones] = useState(DEFAULT_ZONES);
 
   const [adminManualMode, setAdminManualMode] = useState(() => {
     try {
@@ -102,19 +103,54 @@ export default function TaskPanel({ token, isAdmin }) {
   const [robot, setRobot] = useState(null);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
 
-  const [loading, setLoading] = useState(false);
+  const [_loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [actingId, setActingId] = useState(null);
 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [schedulerInfo, setSchedulerInfo] = useState(null);
+  const [missionText, setMissionText] = useState("");
+  const [planResult, setPlanResult] = useState(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planApplying, setPlanApplying] = useState(false);
+  const [planError, setPlanError] = useState("");
 
   const robotIsIdle = (robot?.currentState || "") === "IDLE";
   const shouldAutoAssign = !isAdmin || !adminManualMode;
 
   const autoScheduleInFlightRef = useRef(false);
   const rowRefs = useRef({});
+
+  const taskZones = useMemo(() => zones.filter((z) => z.type !== "CHARGING"), [zones]);
+  const pickupZones = taskZones;
+  const dropZones = taskZones;
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    (async () => {
+      try {
+        const res = await getZones(token);
+        const list = Array.isArray(res?.zones) ? res.zones : [];
+        if (active && list.length) setZones(list);
+      } catch {
+        if (active) setZones(DEFAULT_ZONES);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    if (pickupZones.length && !pickupZones.some((z) => z.code === pickup_zone)) {
+      setPickupZone(pickupZones[0].code);
+    }
+    if (dropZones.length && !dropZones.some((z) => z.code === drop_zone)) {
+      setDropZone(dropZones[0].code);
+    }
+  }, [pickupZones, dropZones, pickup_zone, drop_zone]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -208,8 +244,6 @@ export default function TaskPanel({ token, isAdmin }) {
       return haystack.includes(query);
     };
 
-    const isCompleted = (t) => t.status === "COMPLETED" || t.status === "REJECTED";
-
     // If the user is actively searching, prioritize correct results over history limiting.
     // Still cap to keep the UI snappy.
     if (query) {
@@ -233,13 +267,7 @@ export default function TaskPanel({ token, isAdmin }) {
     }
 
     return pendingTasks;
-  }, [tab, search, tasksSortedNewestFirst, activeTasks, pendingTasks, completedTasks, completedLimit, allViewMode, allLastN]);
-
-
-  const skippedCompletedCount = useMemo(() => {
-    if (tab !== "ALL") return 0;
-    return 0;
-  }, [tab]);
+  }, [tab, search, tasksSortedNewestFirst, activeTasks, pendingTasks, completedTasks, completedTasksAll, allViewMode, allLastN]);
 
   function jumpToActive() {
     if (!activeTask?.id) return;
@@ -269,7 +297,7 @@ export default function TaskPanel({ token, isAdmin }) {
     setPendingJumpId(null);
   }, [pendingJumpId, visibleTasks]);
 
-  async function refreshAll({ silent = false } = {}) {
+  const refreshAll = useCallback(async ({ silent = false } = {}) => {
     if (!token) return;
     if (!silent) setLoading(true);
     setError("");
@@ -283,14 +311,13 @@ export default function TaskPanel({ token, isAdmin }) {
     } finally {
       if (!silent) setLoading(false);
     }
-  }
+  }, [token]);
 
   useEffect(() => {
     refreshAll();
     const t = setInterval(() => refreshAll({ silent: true }), 2000);
     return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [refreshAll]);
 
 
   // In auto mode, ensure the system keeps moving: if robot is IDLE and there are PENDING tasks,
@@ -317,7 +344,7 @@ export default function TaskPanel({ token, isAdmin }) {
         refreshAll({ silent: true });
       }
     })();
-  }, [token, shouldAutoAssign, robotIsIdle, activeTask, tasks]);
+  }, [token, shouldAutoAssign, robotIsIdle, activeTask, tasks, refreshAll]);
 
   async function onCreate(e) {
     e.preventDefault();
@@ -344,7 +371,7 @@ export default function TaskPanel({ token, isAdmin }) {
   function onChangePickup(next) {
     setPickupZone(next);
     if (next === drop_zone) {
-      const fallback = ZONES.find((z) => z.id !== next)?.id;
+      const fallback = dropZones.find((z) => z.code !== next)?.code;
       if (fallback) setDropZone(fallback);
     }
   }
@@ -352,7 +379,7 @@ export default function TaskPanel({ token, isAdmin }) {
   function onChangeDrop(next) {
     setDropZone(next);
     if (next === pickup_zone) {
-      const fallback = ZONES.find((z) => z.id !== next)?.id;
+      const fallback = pickupZones.find((z) => z.code !== next)?.code;
       if (fallback) setPickupZone(fallback);
     }
   }
@@ -381,58 +408,139 @@ export default function TaskPanel({ token, isAdmin }) {
     }
   }
 
-  async function onStart() {
-    if (!activeTask) return;
-    setError("");
-    setNotice("");
-    setActingId(activeTask.id);
+  async function onPlanMission(e) {
+    e.preventDefault();
+    setPlanError("");
+    setPlanResult(null);
+    setPlanLoading(true);
     try {
-      await startTask(token, activeTask.id);
-      setNotice("Task started → robot MOVING");
-      await refreshAll({ silent: true });
+      const res = await planMission(token, { text: missionText });
+      setPlanResult(res);
     } catch (e) {
-      setError(e.message || "Start failed.");
+      setPlanError(e.message || "Failed to generate plan.");
     } finally {
-      setActingId(null);
+      setPlanLoading(false);
     }
   }
 
-  async function onComplete() {
-    if (!activeTask) return;
-    setError("");
-    setNotice("");
-    setActingId(activeTask.id);
+  async function onApplyPlan() {
+    if (!planResult?.plan?.tasks?.length) return;
+    setPlanError("");
+    setPlanApplying(true);
     try {
-      const res = await completeTask(token, activeTask.id, { auto: shouldAutoAssign });
-      if (isAdmin && adminManualMode) {
-        setNotice("Task completed → robot IDLE (manual override mode)");
-      } else {
-        setNotice("Task completed → robot IDLE");
-        if (res?.next?.decision) setSchedulerInfo(res.next.decision);
-
-        // Fallback: in auto mode, if backend did not schedule next in the same response,
-        // trigger scheduling once (without showing a button).
-        if (shouldAutoAssign && !res?.next && tasks.some((t) => t.status === "PENDING")) {
-          try {
-            const scheduled = await scheduleNextTask(token);
-            if (scheduled?.decision) setSchedulerInfo(scheduled.decision);
-          } catch {
-            // ignore; polling will reflect eventual state
-          }
-        }
+      for (const t of planResult.plan.tasks) {
+        await createTask(token, t, { auto: shouldAutoAssign });
       }
+      setNotice(`Plan applied: ${planResult.plan.tasks.length} task(s) created.`);
       await refreshAll({ silent: true });
     } catch (e) {
-      setError(e.message || "Complete failed.");
+      setPlanError(e.message || "Failed to apply plan.");
     } finally {
-      setActingId(null);
+      setPlanApplying(false);
     }
   }
+
 
   return (
     <div className="mt-6 grid gap-4 lg:grid-cols-5">
       <div className="lg:col-span-2">
         <div className="grid gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Mission Planner</CardTitle>
+              <CardDescription>Describe a mission in plain text and generate a multi-step plan.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={onPlanMission} className="grid gap-3">
+                <div>
+                  <div className="mb-1 text-xs font-semibold text-slate-300">Mission input</div>
+                  <textarea
+                    value={missionText}
+                    onChange={(e) => setMissionText(e.target.value)}
+                    placeholder="Example: Deliver 3 items from Zone B to Zone E, then charge."
+                    className="min-h-[90px] w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  />
+                </div>
+
+                <Button type="submit" disabled={planLoading || !missionText.trim()} className="w-full justify-center">
+                  <Sparkles className="h-4 w-4" />
+                  {planLoading ? "Planning…" : "Generate plan"}
+                </Button>
+
+                {planError ? (
+                  <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-200">
+                    {planError}
+                  </div>
+                ) : null}
+
+                {planResult ? (
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
+                    <div className="flex items-center gap-2 font-semibold">
+                      <Sparkles className="h-4 w-4 text-cyan-300" />
+                      Plan summary
+                    </div>
+                    <div className="mt-2 grid gap-2 text-xs text-slate-300">
+                      <div>
+                        Priority: <span className="text-slate-100 font-semibold">{planResult?.inputs?.priority}</span>
+                        {planResult?.inputs?.weight ? (
+                          <span className="text-slate-400"> · Weight {planResult.inputs.weight}</span>
+                        ) : null}
+                      </div>
+                      <div>
+                        Steps: <span className="text-slate-100 font-semibold">{planResult?.plan?.tasks?.length || 0}</span>
+                        {planResult?.summary?.total_distance != null ? (
+                          <span className="text-slate-400"> · Distance {planResult.summary.total_distance}</span>
+                        ) : null}
+                      </div>
+                      {planResult?.plan?.actions?.length ? (
+                        <div>
+                          Actions: <span className="text-slate-100 font-semibold">{planResult.plan.actions.join(", ")}</span>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {planResult?.warnings?.length ? (
+                      <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                        {planResult.warnings.map((w) => (
+                          <div key={w}>{w}</div>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    <div className="mt-3 space-y-2">
+                      {planResult?.plan?.tasks?.map((t, idx) => (
+                        <div key={`${t.pickup_zone}-${t.drop_zone}-${idx}`} className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-200">
+                          <div className="font-semibold">
+                            Step {idx + 1}: {t.pickup_zone} → {t.drop_zone}
+                          </div>
+                          <div className="text-slate-400">
+                            Weight {t.weight} · Priority {t.priority} · Distance {t.estimated_distance}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-3 text-xs text-slate-400">
+                      Plan is generated by a rule-based planner. Review before applying.
+                    </div>
+
+                    <div className="mt-3">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={onApplyPlan}
+                        disabled={planApplying || !(planResult?.plan?.tasks?.length > 0)}
+                        className="w-full justify-center"
+                      >
+                        {planApplying ? "Applying…" : "Apply plan (create tasks)"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </form>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>Task creation</CardTitle>
@@ -443,8 +551,8 @@ export default function TaskPanel({ token, isAdmin }) {
                 <div>
                   <div className="mb-1 text-xs font-semibold text-slate-300">Pickup zone</div>
                   <Select value={pickup_zone} onChange={(e) => onChangePickup(e.target.value)}>
-                    {ZONES.map((z) => (
-                      <option key={z.id} value={z.id}>
+                    {pickupZones.map((z) => (
+                      <option key={z.code} value={z.code}>
                         {z.label}
                       </option>
                     ))}
@@ -453,8 +561,8 @@ export default function TaskPanel({ token, isAdmin }) {
               <div>
                 <div className="mb-1 text-xs font-semibold text-slate-300">Drop zone</div>
                 <Select value={drop_zone} onChange={(e) => onChangeDrop(e.target.value)}>
-                  {ZONES.map((z) => (
-                    <option key={z.id} value={z.id}>
+                  {dropZones.map((z) => (
+                    <option key={z.code} value={z.code}>
                       {z.label}
                     </option>
                   ))}

@@ -11,7 +11,7 @@ router.use(authMiddleware);
 /** GET /api/robots — fetch the single active robot */
 router.get("/", async (_req, res) => {
   try {
-    const robot = await Robot.findOne({}).sort({ createdAt: 1 });
+    const robot = await Robot.findOne({}).sort({ createdAt: 1 }).populate("location_zone_id");
     if (!robot) {
       return res.status(404).json({ message: "Robot not initialized." });
     }
@@ -60,6 +60,8 @@ router.post("/transition", async (req, res) => {
     robot.currentState = nextState;
     robot.updatedAt = new Date();
     await robot.save();
+
+    await robot.populate("location_zone_id");
 
     const json = robot.toJSON();
     // eslint-disable-next-line no-console

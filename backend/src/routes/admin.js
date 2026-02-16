@@ -8,6 +8,7 @@ import { Robot } from "../models/Robot.js";
 import { Log } from "../models/Log.js";
 
 const router = express.Router();
+const BATTERY_BLOCK_REASONS = ["INSUFFICIENT_BATTERY_RETURN", "INSUFFICIENT_BATTERY", "BATTERY"];
 
 router.get("/stats", authMiddleware, roleMiddleware(["admin"]), async (_req, res) => {
   try {
@@ -141,7 +142,8 @@ router.get("/metrics", authMiddleware, roleMiddleware(["admin"]), async (req, re
       robot,
       createdByDay,
       completedByDay,
-      rejectedByDay
+      rejectedByDay,
+      deferredBatteryPending
     ] = await Promise.all([
       Task.countDocuments({}),
       Task.aggregate([
@@ -172,7 +174,7 @@ router.get("/metrics", authMiddleware, roleMiddleware(["admin"]), async (req, re
           }
         }
       ]),
-      Robot.findOne({}).sort({ createdAt: 1 }).lean(),
+      Robot.findOne({}).sort({ createdAt: 1 }).populate("location_zone_id").lean({ virtuals: true }),
       Task.aggregate([
         { $match: { createdAt: { $gte: fromDate } } },
         {
@@ -202,7 +204,8 @@ router.get("/metrics", authMiddleware, roleMiddleware(["admin"]), async (req, re
           }
         },
         { $sort: { _id: 1 } }
-      ])
+      ]),
+      Task.countDocuments({ status: { $in: ["PENDING", "REJECTED"] }, blocked_reason: { $in: BATTERY_BLOCK_REASONS } })
     ]);
 
     const statusMap = byStatus.reduce((acc, row) => {
@@ -220,6 +223,7 @@ router.get("/metrics", authMiddleware, roleMiddleware(["admin"]), async (req, re
         startToComplete: durations.avgStartToCompleteMs || 0,
         createToComplete: durations.avgCreateToCompleteMs || 0
       },
+      deferredBatteryPending,
       robot: robot
         ? {
             id: String(robot._id),

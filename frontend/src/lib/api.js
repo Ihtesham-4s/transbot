@@ -63,15 +63,17 @@ export function adminGetLogs(token, { eventType = "", page = 1, limit = 50, from
   if (to) params.set("to", to);
   const qs = params.toString();
   return apiFetch(`/api/admin/logs${qs ? `?${qs}` : ""}`, { method: "GET", token });
-}
-
-export function adminGetMetrics(token, { days = 7 } = {}) {
+}export function adminGetMetrics(token, { days = 7 } = {}) {
   const qs = days ? `?days=${days}` : "";
   return apiFetch(`/api/admin/metrics${qs}`, { method: "GET", token });
 }
 
 export function getRobot(token) {
   return apiFetch("/api/robots", { method: "GET", token });
+}
+
+export function getZones(token) {
+  return apiFetch("/api/zones", { method: "GET", token });
 }
 
 export function robotTransition(token, nextState) {
@@ -98,6 +100,10 @@ export function listTasks(token) {
 
 export function getTaskFeasibility(token, id) {
   return apiFetch(`/api/tasks/${id}/feasibility`, { method: "GET", token });
+}
+
+export function planMission(token, payload) {
+  return apiFetch("/api/tasks/plan", { method: "POST", token, body: JSON.stringify(payload) });
 }
 
 // Internal helper: used to auto-trigger scheduling without exposing a UI button.

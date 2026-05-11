@@ -1,26 +1,26 @@
-/** Robot FSM states — must match backend enum */
 export const ROBOT_STATES = Object.freeze({
   IDLE: "IDLE",
   ASSIGNED: "ASSIGNED",
   MOVING: "MOVING",
   PAUSED: "PAUSED",
+  BUSY: "BUSY",
   ERROR: "ERROR"
 });
 
-/** Human-readable labels for examiner clarity */
 export const ROBOT_STATE_LABELS = Object.freeze({
   [ROBOT_STATES.IDLE]: "Idle",
   [ROBOT_STATES.ASSIGNED]: "Assigned",
   [ROBOT_STATES.MOVING]: "Moving",
   [ROBOT_STATES.PAUSED]: "Paused",
+  [ROBOT_STATES.BUSY]: "Busy",
   [ROBOT_STATES.ERROR]: "Error"
 });
 
-/** Badge Tailwind classes (Day-1 style: border + bg + text) */
 export const ROBOT_STATE_BADGE_CLASSES = Object.freeze({
-  [ROBOT_STATES.IDLE]: "border-slate-400/40 bg-slate-500/20 text-slate-200",
-  [ROBOT_STATES.ASSIGNED]: "border-blue-400/40 bg-blue-500/20 text-blue-200",
-  [ROBOT_STATES.MOVING]: "border-emerald-400/40 bg-emerald-500/20 text-emerald-200",
-  [ROBOT_STATES.PAUSED]: "border-amber-400/40 bg-amber-500/20 text-amber-200",
-  [ROBOT_STATES.ERROR]: "border-rose-400/40 bg-rose-500/20 text-rose-200"
+  [ROBOT_STATES.IDLE]: "border-emerald-500/30 bg-emerald-500/15 text-emerald-300",
+  [ROBOT_STATES.ASSIGNED]: "border-amber-500/30 bg-amber-500/15 text-amber-200",
+  [ROBOT_STATES.MOVING]: "border-cyan-500/30 bg-cyan-500/15 text-cyan-200",
+  [ROBOT_STATES.PAUSED]: "border-orange-500/30 bg-orange-500/15 text-orange-200",
+  [ROBOT_STATES.BUSY]: "border-amber-500/30 bg-amber-500/15 text-amber-200",
+  [ROBOT_STATES.ERROR]: "border-rose-500/30 bg-rose-500/15 text-rose-200"
 });

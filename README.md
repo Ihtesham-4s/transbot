@@ -1,9 +1,9 @@
-## FYPPP Phase 1 — Day 1: Auth + RBAC
+## FYPPP Phase 1 — Day 1: Auth + Access Control
 
 This repo contains:
 
-- `backend/`: Node.js + Express + MongoDB + JWT auth + role-based access
-- `frontend/`: React + Tailwind (modern UI) with login/signup + role-based dashboards
+- `backend/`: Node.js + Express + MongoDB + JWT auth + authenticated access
+- `frontend/`: React + Tailwind (modern UI) with login/signup + single dashboard
 
 ### Prerequisites
 
@@ -35,7 +35,7 @@ Backend runs on `http://localhost:5000`.
 
 ### API
 
-- `POST /api/auth/register`  (name, email, password, role)
+- `POST /api/auth/register`  (name, email, password)
 - `POST /api/auth/login`     (email, password)
 - `GET /api/users/me`        (Bearer JWT)
 
@@ -56,7 +56,5 @@ Frontend runs on `http://localhost:5173` and talks to the backend at `http://loc
 ## 4) Notes
 
 - JWT stored in `localStorage`
-- Role-based redirect:
-  - `admin` -> `/admin`
-  - `operator` -> `/operator`
+- All authenticated users enter the same dashboard.
 

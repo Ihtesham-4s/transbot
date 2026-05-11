@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "./Button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./Card";
 
@@ -11,60 +12,75 @@ export function ConfirmDialog({
   cancelText = "Cancel",
   onConfirm,
   onCancel,
-  destructive = false
+  destructive = false,
+  confirmLoading = false
 }) {
   useEffect(() => {
-    if (!open) return;
+    if (!open) return undefined;
 
-    const onKeyDown = (e) => {
-      if (e.key === "Escape") onCancel?.();
+    const handleEscape = (event) => {
+      if (event.key === "Escape") onCancel?.();
     };
 
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
   }, [open, onCancel]);
 
-  if (!open) return null;
+  const MotionDiv = motion.div;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
-        className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
-        onClick={() => onCancel?.()}
-      />
+    <AnimatePresence>
+      {open ? (
+        <MotionDiv
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <button
+            type="button"
+            aria-label="Close dialog"
+            className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
+            onClick={() => onCancel?.()}
+          />
 
-      <div className="relative w-full max-w-md">
-        <Card>
-          <CardHeader>
-            <div className="flex items-start gap-3">
-              {icon ? (
-                <div className="mt-1 flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-                  {icon}
+          <MotionDiv
+            className="relative z-10 w-full max-w-md"
+            initial={{ opacity: 0, y: 16, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.98 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+          >
+            <Card>
+              <CardHeader>
+                <div className="flex items-start gap-3">
+                  {icon ? (
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white backdrop-blur-xl">
+                      {icon}
+                    </div>
+                  ) : null}
+                  <div>
+                    <CardTitle>{title}</CardTitle>
+                    {description ? <CardDescription>{description}</CardDescription> : null}
+                  </div>
                 </div>
-              ) : null}
-              <div>
-                <CardTitle className={destructive ? "from-white via-blue-200 to-cyan-200" : undefined}>
-                  {title}
-                </CardTitle>
-                {description ? <CardDescription>{description}</CardDescription> : null}
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <Button variant="secondary" onClick={() => onCancel?.()}>
-                {cancelText}
-              </Button>
-              <Button
-                onClick={() => onConfirm?.()}
-                className={destructive ? "from-blue-600 via-purple-600 to-cyan-600" : undefined}
-              >
-                {confirmText}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+              </CardHeader>
+              <CardContent className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <Button variant="secondary" onClick={() => onCancel?.()}>
+                  {cancelText}
+                </Button>
+                <Button
+                  variant={destructive ? "danger" : "primary"}
+                  isLoading={confirmLoading}
+                  onClick={() => onConfirm?.()}
+                >
+                  {confirmText}
+                </Button>
+              </CardContent>
+            </Card>
+          </MotionDiv>
+        </MotionDiv>
+      ) : null}
+    </AnimatePresence>
   );
 }

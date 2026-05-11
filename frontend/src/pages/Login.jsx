@@ -1,117 +1,119 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Lock, Mail } from "lucide-react";
+import { Bot, Lock, Mail } from "lucide-react";
 import { AuthShell } from "../components/AuthShell";
 import { Button } from "../components/ui/Button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/Card";
+import { Card, CardContent, CardDescription, CardTitle } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { loginUser } from "../lib/api";
+import { getErrorMessage } from "../lib/formatters";
 import { useAuth } from "../context/AuthContext";
 
-function roleHome(role) {
-  return role === "admin" ? "/admin" : "/operator";
-}
-
 export default function Login() {
-  const nav = useNavigate();
+  const navigate = useNavigate();
   const { setAuth } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
-  async function onSubmit(e) {
-    e.preventDefault();
+  async function handleSubmit(event) {
+    event.preventDefault();
     setError("");
-    setSuccess("");
     setSubmitting(true);
+
     try {
-      const res = await loginUser({ email, password });
-      setSuccess("Login successful. Redirecting...");
-      setTimeout(() => {
-        setAuth({ token: res.token, user: res.user });
-        nav(roleHome(res.user.role), { replace: true });
-      }, 1200);
-    } catch (err) {
-      setError(err.message || "Login failed.");
+      const response = await loginUser({ email, password });
+      setAuth({ token: response.token, user: response.user });
+      navigate("/dashboard", { replace: true });
+    } catch (submitError) {
+      setError(getErrorMessage(submitError, "Login failed."));
       setSubmitting(false);
-    } finally {
-      // keep submitting true on success to prevent duplicate submits during redirect
     }
   }
 
   return (
-    <AuthShell productName="TransBot" productTagline="Warehouse Automation System">
-      <Card className="w-full">
-        <CardHeader>
-          <CardTitle>Welcome back</CardTitle>
-          <CardDescription>Sign in to access your dashboard</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={onSubmit} className="grid gap-6">
-            <div className="grid gap-2.5">
-              <label className="text-sm font-bold text-slate-300">Email address</label>
-              <div className="relative group">
-                <Mail className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-blue-400 z-20" />
+    <AuthShell>
+      <Card className="animate-fade-in-up">
+        <CardContent className="space-y-8 px-8 py-8 sm:px-9">
+          <div className="text-center animate-fade-in">
+            <div className="relative mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-blue-600 via-purple-600 to-cyan-600 shadow-[0_0_40px_rgba(59,130,246,0.35)]">
+              <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-blue-400/30 via-purple-400/20 to-cyan-400/30 blur-xl animate-pulse-glow" />
+              <Bot className="relative z-10 h-8 w-8 text-white" />
+            </div>
+            <div className="brand-heading bg-gradient-to-r from-blue-400 via-purple-400 to-cyan-400 bg-clip-text text-3xl font-semibold text-transparent">
+              TransBot
+            </div>
+            <p className="mt-2 text-sm text-slate-400">
+              Secure access to robot operations, tasks, and live system activity.
+            </p>
+          </div>
+
+          <div className="space-y-2 text-center animate-fade-in-up" style={{ animationDelay: "80ms" }}>
+            <CardTitle className="text-2xl text-white">Sign in</CardTitle>
+            <CardDescription className="text-slate-400">
+              Enter your credentials to open the TransBot dashboard.
+            </CardDescription>
+          </div>
+
+          <form className="grid gap-5" onSubmit={handleSubmit}>
+            <div className="grid gap-2 animate-fade-in-up" style={{ animationDelay: "140ms" }}>
+              <label className="text-sm font-medium text-slate-300">Email</label>
+              <div className="group relative">
+                <Mail className="pointer-events-none absolute left-4 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-blue-300" />
                 <Input
-                  className="pl-12"
                   type="email"
                   autoComplete="email"
+                  className="pl-11"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(event) => setEmail(event.target.value)}
                   placeholder="you@example.com"
                   required
                 />
               </div>
             </div>
 
-            <div className="grid gap-2.5">
-              <label className="text-sm font-bold text-slate-300">Password</label>
-              <div className="relative group">
-                <Lock className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-blue-400 z-20" />
+            <div className="grid gap-2 animate-fade-in-up" style={{ animationDelay: "200ms" }}>
+              <label className="text-sm font-medium text-slate-300">Password</label>
+              <div className="group relative">
+                <Lock className="pointer-events-none absolute left-4 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-blue-300" />
                 <Input
-                  className="pl-12"
                   type="password"
                   autoComplete="current-password"
+                  className="pl-11"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="Enter your password"
                   required
                 />
               </div>
             </div>
 
             {error ? (
-              <div className="rounded-xl border border-red-500/30 bg-gradient-to-r from-red-500/10 via-rose-500/10 to-red-500/10 px-4 py-3.5 text-sm font-semibold text-red-300 backdrop-blur-sm shadow-lg border-red-500/20">
+              <div className="animate-fade-in rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200 backdrop-blur-sm">
                 {error}
               </div>
             ) : null}
 
-            {success ? (
-              <div className="fixed left-1/2 top-6 z-50 w-[90%] max-w-md -translate-x-1/2 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3.5 text-sm font-semibold text-emerald-200 shadow-lg backdrop-blur">
-                {success}
-              </div>
-            ) : null}
-
-            <Button type="submit" disabled={submitting} className="w-full mt-2">
-              {submitting ? (
-                <span className="flex items-center gap-2">
-                  <span className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  Signing in...
-                </span>
-              ) : (
-                "Sign in"
-              )}
+            <Button
+              type="submit"
+              isLoading={submitting}
+              className="w-full animate-fade-in-up"
+              style={{ animationDelay: "260ms" }}
+            >
+              {submitting ? "Signing in..." : "Sign in"}
             </Button>
 
-            <div className="text-center text-sm text-slate-400 pt-2">
+            <div
+              className="animate-fade-in-up text-center text-sm text-slate-400"
+              style={{ animationDelay: "320ms" }}
+            >
               Don&apos;t have an account?{" "}
               <Link
-                className="font-bold text-blue-400 hover:text-cyan-400 hover:underline transition-colors"
+                className="font-semibold bg-gradient-to-r from-blue-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent transition-opacity hover:opacity-80"
                 to="/register"
               >
-                Create account
+                Register
               </Link>
             </div>
           </form>
@@ -120,4 +122,3 @@ export default function Login() {
     </AuthShell>
   );
 }
-

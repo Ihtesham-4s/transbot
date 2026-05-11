@@ -24,7 +24,7 @@ export function AuthProvider({ children }) {
       try {
         const res = await getMe(token);
         if (!cancelled) setUser(res.user);
-      } catch {
+      } catch (error) {
         if (!cancelled) {
           setToken(null);
           setUser(null);

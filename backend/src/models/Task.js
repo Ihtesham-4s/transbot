@@ -1,6 +1,5 @@
 import { mongoose } from "../db.js";
 
-const TASK_PRIORITIES = Object.freeze(["HIGH", "MEDIUM", "LOW"]);
 const TASK_STATUSES = Object.freeze([
   "PENDING",
   "ASSIGNED",
@@ -8,6 +7,8 @@ const TASK_STATUSES = Object.freeze([
   "COMPLETED",
   "REJECTED"
 ]);
+
+const TASK_PRIORITIES = Object.freeze(["LOW", "MEDIUM", "HIGH", "URGENT"]);
 
 const taskSchema = new mongoose.Schema(
   {
@@ -26,19 +27,14 @@ const taskSchema = new mongoose.Schema(
       default: "PENDING",
       required: true
     },
-    blocked_reason: { type: String, default: "" },
-    blocked_at: { type: Date, default: null },
-    retry_after: { type: Date, default: null },
     assigned_robot_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Robot",
       default: null
     },
-    rejection_reason: { type: String, default: "" },
     assignedAt: { type: Date, default: null },
     startedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
-    rejectedAt: { type: Date, default: null },
     createdAt: { type: Date, default: Date.now }
   },
   {
@@ -48,26 +44,44 @@ const taskSchema = new mongoose.Schema(
 );
 
 taskSchema.index({ status: 1, createdAt: 1 });
-taskSchema.index({ priority: 1, status: 1, createdAt: 1 });
 taskSchema.index({ assigned_robot_id: 1, status: 1 });
-taskSchema.index({ blocked_reason: 1, status: 1, createdAt: 1 });
 taskSchema.index({ createdAt: 1 });
 
 taskSchema.virtual("pickup_zone").get(function () {
   return this.pickup_zone_id?.code || null;
 });
 
+taskSchema.virtual("pickup_zone_label").get(function () {
+  return this.pickup_zone_id?.label || null;
+});
+
 taskSchema.virtual("drop_zone").get(function () {
   return this.drop_zone_id?.code || null;
+});
+
+taskSchema.virtual("drop_zone_label").get(function () {
+  return this.drop_zone_id?.label || null;
 });
 
 taskSchema.set("toJSON", {
   virtuals: true,
   transform: (_doc, ret) => {
     ret.id = String(ret._id);
-    if (ret.assigned_robot_id) ret.assigned_robot_id = String(ret.assigned_robot_id);
-    if (ret.pickup_zone_id) ret.pickup_zone_id = String(ret.pickup_zone_id);
-    if (ret.drop_zone_id) ret.drop_zone_id = String(ret.drop_zone_id);
+    if (ret.assigned_robot_id) {
+      ret.assigned_robot_id = ret.assigned_robot_id.id
+        ? String(ret.assigned_robot_id.id)
+        : String(ret.assigned_robot_id);
+    }
+    if (ret.pickup_zone_id) {
+      ret.pickup_zone_id = ret.pickup_zone_id.id
+        ? String(ret.pickup_zone_id.id)
+        : String(ret.pickup_zone_id);
+    }
+    if (ret.drop_zone_id) {
+      ret.drop_zone_id = ret.drop_zone_id.id
+        ? String(ret.drop_zone_id.id)
+        : String(ret.drop_zone_id);
+    }
     delete ret._id;
     delete ret.__v;
     return ret;
@@ -75,5 +89,5 @@ taskSchema.set("toJSON", {
 });
 
 export const Task = mongoose.models.Task || mongoose.model("Task", taskSchema);
-export const TASK_PRIORITY_VALUES = TASK_PRIORITIES;
 export const TASK_STATUS_VALUES = TASK_STATUSES;
+export const TASK_PRIORITY_VALUES = TASK_PRIORITIES;

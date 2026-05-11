@@ -3,16 +3,26 @@ import bcrypt from "bcrypt";
 import { z } from "zod";
 import { signToken } from "../utils/jwt.js";
 import { User } from "../models/User.js";
+import { createRateLimiter } from "../middleware/rateLimitMiddleware.js";
 
 const router = express.Router();
+
+const registerLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: "Too many registration attempts. Please try again later."
+});
+
+const loginLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: "Too many login attempts. Please try again later."
+});
 
 const registerSchema = z.object({
   name: z.string().min(1).max(100),
   email: z.string().email().max(100),
-  password: z.string().min(6).max(255),
-  // Role is server-controlled. We keep it optional for backward compatibility
-  // with older clients that still send it.
-  role: z.enum(["admin", "operator"]).optional()
+  password: z.string().min(6).max(255)
 });
 
 const loginSchema = z.object({
@@ -20,32 +30,22 @@ const loginSchema = z.object({
   password: z.string().min(1).max(255)
 });
 
-router.post("/register", async (req, res) => {
+router.post("/register", registerLimiter, async (req, res) => {
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ message: "Invalid input.", errors: parsed.error.flatten() });
   }
 
-  const { name, email, password, role } = parsed.data;
+  const { name, email, password } = parsed.data;
 
   try {
-    const userCount = await User.countDocuments({});
-    const isFirstUser = userCount === 0;
-    if (!isFirstUser && role === "admin") {
-      return res
-        .status(403)
-        .json({ message: "Admin role can only be assigned to the first registered user." });
-    }
-
-    const finalRole = isFirstUser ? "admin" : role || "operator";
-
     const existing = await User.findOne({ email }).select("_id");
     if (existing) {
       return res.status(409).json({ message: "Email already registered." });
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const created = await User.create({ name, email, passwordHash, role: finalRole });
+    const created = await User.create({ name, email, passwordHash, role: "user" });
 
     const token = signToken({
       id: String(created._id),
@@ -73,7 +73,7 @@ router.post("/register", async (req, res) => {
   }
 });
 
-router.post("/login", async (req, res) => {
+router.post("/login", loginLimiter, async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ message: "Invalid input.", errors: parsed.error.flatten() });

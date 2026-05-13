@@ -113,3 +113,132 @@ export function completeTask(token, id) {
 export function deleteTask(token, id) {
   return apiFetch(`/api/tasks/${id}`, { method: "DELETE", token });
 }
+
+// Inventory
+export function createProduct(token, payload) {
+  return apiFetch("/api/products", {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+export function listProducts(token) {
+  return apiFetch("/api/products", { method: "GET", token });
+}
+
+export function getProduct(token, id) {
+  return apiFetch(`/api/products/${id}`, { method: "GET", token });
+}
+
+export function updateProduct(token, id, payload) {
+  return apiFetch(`/api/products/${id}`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteProduct(token, id) {
+  return apiFetch(`/api/products/${id}`, { method: "DELETE", token });
+}
+
+export function stockIn(token, payload) {
+  return apiFetch("/api/stock/in", {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+export function stockOut(token, payload) {
+  return apiFetch("/api/stock/out", {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+export function stockTransfer(token, payload) {
+  return apiFetch("/api/stock/transfer", {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+export function listStockMovements(token, { limit = 100 } = {}) {
+  const params = new URLSearchParams();
+  if (limit) params.set("limit", String(limit));
+  const qs = params.toString();
+  return apiFetch(`/api/stock/movements${qs ? `?${qs}` : ""}`, { method: "GET", token });
+}
+
+export function getInventorySummary(token) {
+  return apiFetch("/api/inventory/summary", { method: "GET", token });
+}
+
+export function getLowStockProducts(token) {
+  return apiFetch("/api/inventory/low-stock", { method: "GET", token });
+}
+
+export function getOverstockProducts(token) {
+  return apiFetch("/api/inventory/overstock", { method: "GET", token });
+}
+
+export function getReorderSuggestions(token) {
+  return apiFetch("/api/inventory/reorder-suggestions", { method: "GET", token });
+}
+
+// Order fulfillment
+export function getOrders(token) {
+  return apiFetch("/api/orders", { method: "GET", token });
+}
+
+export function getOrder(token, id) {
+  return apiFetch(`/api/orders/${id}`, { method: "GET", token });
+}
+
+export function createOrder(token, payload) {
+  return apiFetch("/api/orders", {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+export function cancelOrder(token, id) {
+  return apiFetch(`/api/orders/${id}/cancel`, { method: "PUT", token });
+}
+
+export function generatePickList(token, orderId) {
+  return apiFetch(`/api/orders/${orderId}/picklist`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({})
+  });
+}
+
+export function getPickLists(token) {
+  return apiFetch("/api/picklists", { method: "GET", token });
+}
+
+export function getPickList(token, id) {
+  return apiFetch(`/api/picklists/${id}`, { method: "GET", token });
+}
+
+export function completePickList(token, id) {
+  return apiFetch(`/api/picklists/${id}/complete`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({})
+  });
+}
+
+export function getFulfillmentSummary(token) {
+  return apiFetch("/api/fulfillment/summary", { method: "GET", token });
+}
+
+export function getDashboardOverview(token) {
+  return apiFetch("/api/dashboard/overview", { method: "GET", token });
+}

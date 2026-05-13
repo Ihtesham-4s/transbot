@@ -8,8 +8,10 @@ import {
   List,
   LogOut,
   Menu,
+  Package,
   X,
-  Map
+  Map,
+  ClipboardCheck
 } from "lucide-react";
 import { AppDataProvider } from "../../context/AppDataContext";
 import { useAuth } from "../../context/AuthContext";
@@ -18,9 +20,10 @@ import { cn } from "../../lib/cn";
 
 const navItems = [
   { label: "Dashboard", to: "/dashboard", icon: House },
+  { label: "Inventory", to: "/inventory", icon: Package },
+  { label: "Fulfillment", to: "/fulfillment", icon: ClipboardCheck },
   { label: "Tasks", to: "/tasks", icon: List },
   { label: "Robot Control", to: "/robot", icon: Cpu },
-  { label: "Path Planner", to: "/planner", icon: Map },
   { label: "Logs", to: "/logs", icon: FileText }
 ];
 

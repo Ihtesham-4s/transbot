@@ -9,6 +9,9 @@ import systemRoutes from "./routes/system.js";
 import robotRoutes from "./routes/robots.js";
 import taskRoutes from "./routes/tasks.js";
 import zoneRoutes from "./routes/zones.js";
+import inventoryRoutes from "./routes/inventory.js";
+import fulfillmentRoutes from "./routes/fulfillment.js";
+import dashboardRoutes from "./routes/dashboard.js";
 import { connectDb, isDbConnected, mongoose } from "./db.js";
 import { Robot } from "./models/Robot.js";
 import { Zone } from "./models/Zone.js";
@@ -48,6 +51,9 @@ app.use("/api/system", systemRoutes);
 app.use("/api/robots", robotRoutes);
 app.use("/api/tasks", taskRoutes);
 app.use("/api/zones", zoneRoutes);
+app.use("/api", inventoryRoutes);
+app.use("/api", fulfillmentRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 app.use((_req, res) => res.status(404).json({ message: "Not found." }));
 

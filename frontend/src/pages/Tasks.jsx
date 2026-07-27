@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Copy, PackagePlus, RefreshCw, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { AlertTriangle, Copy, ListFilter, PackagePlus, RefreshCw, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -11,7 +11,9 @@ import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { PageHeader } from "../components/PageHeader";
 import { PageTransition } from "../components/PageTransition";
 import { useAppData } from "../context/AppDataContext";
+import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
+import { listTaskQueue } from "../lib/api";
 import { formatDateTime, formatTaskId, formatWeight } from "../lib/formatters";
 import { getTaskStatusMeta } from "../lib/status";
 
@@ -29,6 +31,7 @@ function TasksTableSkeleton() {
 
 export default function Tasks() {
   const toast = useToast();
+  const { token } = useAuth();
   const {
     pickupZones,
     dropZones,
@@ -53,6 +56,10 @@ export default function Tasks() {
   const [bulkText, setBulkText] = useState("");
   const [taskToDelete, setTaskToDelete] = useState(null);
   const [page, setPage] = useState(1);
+  const [queueOpen, setQueueOpen] = useState(true);
+  const [queueTasks, setQueueTasks] = useState([]);
+  const [queueLoading, setQueueLoading] = useState(true);
+  const [queueRefreshing, setQueueRefreshing] = useState(false);
 
   const selectedPickupZone = pickupZone || pickupZones[0]?.code || "";
   const selectedDropZone = dropZone || dropZones[0]?.code || "";
@@ -63,16 +70,56 @@ export default function Tasks() {
   const currentPage = Math.min(page, totalPages);
   const paginatedTasks = sortedTasks.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
+  const loadTaskQueue = useCallback(async ({ silent = false } = {}) => {
+    if (!token) {
+      setQueueTasks([]);
+      setQueueLoading(false);
+      return;
+    }
+
+    if (silent) setQueueRefreshing(true);
+    else setQueueLoading(true);
+
+    try {
+      const data = await listTaskQueue(token);
+      setQueueTasks(data.tasks || []);
+    } catch {
+      setQueueTasks([]);
+    } finally {
+      setQueueLoading(false);
+      setQueueRefreshing(false);
+    }
+  }, [token]);
+
   useEffect(() => {
-    setPage((current) => Math.min(current, totalPages));
-  }, [totalPages]);
+    loadTaskQueue();
+  }, [loadTaskQueue, tasks]);
+
+  async function handleRefreshAll() {
+    await Promise.allSettled([refreshData(), loadTaskQueue({ silent: true })]);
+  }
 
   async function handleCreateTask(event) {
     event.preventDefault();
+
+    const parsedWeight = Number(weight);
+    if (!Number.isFinite(parsedWeight) || parsedWeight <= 0) {
+      toast.error("Weight must be greater than 0.");
+      return;
+    }
+    if (parsedWeight > 10) {
+      toast.error("Weight cannot exceed 10kg.");
+      return;
+    }
+    if (selectedPickupZone === selectedDropZone) {
+      toast.error("Pickup and drop zones must be different.");
+      return;
+    }
+
     await createTaskAction({
       pickup_zone: selectedPickupZone,
       drop_zone: selectedDropZone,
-      weight: Number(weight),
+      weight: parsedWeight,
       priority: priority
     });
     setWeight("1");
@@ -109,7 +156,7 @@ export default function Tasks() {
         description="Create delivery jobs, monitor their progress, and manage the queue from one place."
         lastUpdated={lastUpdated}
         actions={
-          <Button variant="secondary" onClick={refreshData} isLoading={refreshing}>
+          <Button variant="secondary" onClick={handleRefreshAll} isLoading={refreshing || queueRefreshing}>
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
@@ -254,6 +301,63 @@ export default function Tasks() {
             </form>
           )}
         </CardContent>
+      </Card>
+
+      <Card className="mt-6">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <ListFilter className="h-5 w-5 text-cyan-300" />
+              Queue View
+            </CardTitle>
+            <CardDescription>Pending and assigned dispatch work ordered by priority, then oldest first.</CardDescription>
+          </div>
+          <Button type="button" variant="secondary" size="sm" onClick={() => setQueueOpen((value) => !value)}>
+            {queueOpen ? "Hide Queue" : "Show Queue"}
+          </Button>
+        </CardHeader>
+        {queueOpen ? (
+          <CardContent>
+            {queueLoading && queueTasks.length === 0 ? (
+              <TasksTableSkeleton />
+            ) : queueTasks.length === 0 ? (
+              <EmptyState title="Queue is clear" description="Pending and assigned tasks will appear here in priority order." />
+            ) : (
+              <div className="grid gap-3">
+                {queueTasks.map((task, index) => {
+                  const statusMeta = getTaskStatusMeta(task.status);
+
+                  return (
+                    <div key={task.id} className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-xl">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone="neutral">#{index + 1}</Badge>
+                            <span className="font-mono text-sm text-slate-300" title={task.id}>{formatTaskId(task.id)}</span>
+                            <Badge className={task.priority === "URGENT" ? "bg-red-500/20 text-red-200" : task.priority === "HIGH" ? "bg-orange-500/20 text-orange-200" : task.priority === "MEDIUM" ? "bg-blue-500/20 text-blue-200" : "bg-slate-500/20 text-slate-200"}>
+                              {task.priority || "MEDIUM"}
+                            </Badge>
+                            <Badge className={statusMeta.className}>{statusMeta.label}</Badge>
+                          </div>
+                          <div className="mt-2 text-sm text-slate-300">
+                            {task.pickup_zone_label || task.pickup_zone || "Unknown"} to {task.drop_zone_label || task.drop_zone || "Unknown"} · {formatWeight(task.weight)} kg
+                          </div>
+                          {task.interruptsPending ? (
+                            <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+                              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                              <span>Urgent task waiting — complete this one first is not required, but consider prioritizing.</span>
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="text-sm text-slate-400">{formatDateTime(task.createdAt)}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        ) : null}
       </Card>
 
       <Card className="mt-6">

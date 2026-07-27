@@ -1,87 +1,98 @@
 import { mongoose } from "../db.js";
 
-const ORDER_PRIORITIES = Object.freeze(["LOW", "NORMAL", "HIGH", "URGENT"]);
-const ORDER_STATUSES = Object.freeze([
-  "PENDING",
-  "READY_TO_PICK",
-  "INSUFFICIENT_STOCK",
-  "PICKING",
-  "PICKED",
-  "COMPLETED",
-  "CANCELLED"
-]);
-
 const orderItemSchema = new mongoose.Schema(
   {
-    productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
-    sku: { type: String, required: true, trim: true },
-    name: { type: String, required: true, trim: true },
-    quantity: { type: Number, required: true, min: 1 },
-    location: { type: String, trim: true, default: "" },
-    availableStockAtCreation: { type: Number, required: true, min: 0 }
-  },
-  { _id: false }
-);
-
-const insufficientItemSchema = new mongoose.Schema(
-  {
-    productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
-    sku: { type: String, required: true, trim: true },
-    name: { type: String, required: true, trim: true },
-    requestedQty: { type: Number, required: true, min: 1 },
-    availableQty: { type: Number, required: true, min: 0 },
-    shortageQty: { type: Number, required: true, min: 1 }
+    product_id: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
+    quantity: { type: Number, required: true, min: 1 }
   },
   { _id: false }
 );
 
 const orderSchema = new mongoose.Schema(
   {
-    orderNo: { type: String, required: true, unique: true, trim: true, maxlength: 64 },
-    customerName: { type: String, required: true, trim: true, maxlength: 200 },
-    priority: { type: String, enum: ORDER_PRIORITIES, default: "NORMAL" },
-    status: { type: String, enum: ORDER_STATUSES, default: "PENDING" },
-    items: { type: [orderItemSchema], default: [] },
-    totalItems: { type: Number, default: 0, min: 0 },
-    insufficientItems: { type: [insufficientItemSchema], default: [] },
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
-    dueDate: { type: Date, default: null },
-    pickedAt: { type: Date, default: null },
-    completedAt: { type: Date, default: null }
+    orderNumber: { type: String, required: true, trim: true },
+    items: { type: [orderItemSchema], required: true, validate: [(items) => items.length > 0, "At least one item is required."] },
+    status: {
+      type: String,
+      enum: ["PENDING", "APPROVED", "REJECTED", "BLOCKED"],
+      default: "PENDING"
+    },
+    blockedReason: { type: String, trim: true, default: null },
+    deliverZone_id: { type: mongoose.Schema.Types.ObjectId, ref: "Zone", required: true },
+    requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null }
   },
   { timestamps: true }
 );
 
-orderSchema.index({ status: 1, createdAt: -1 });
-orderSchema.index({ orderNo: 1 });
-orderSchema.index({ customerName: 1 });
+orderSchema.index(
+  { orderNumber: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { orderNumber: { $type: "string" } }
+  }
+);
+
+orderSchema.pre("validate", async function (next) {
+  if (!this.isNew || this.orderNumber) return next();
+
+  try {
+    const counter = (await this.constructor.countDocuments({})) + 1;
+    this.orderNumber = `ORD-${Date.now()}-${String(counter).padStart(4, "0")}`;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+});
+
+function preserveOrFlattenReference(doc, ret, fieldName) {
+  if (!ret[fieldName]) return;
+  if (!doc?.populated?.(fieldName)) {
+    ret[fieldName] = ret[fieldName].id ? String(ret[fieldName].id) : String(ret[fieldName]);
+  }
+}
 
 orderSchema.set("toJSON", {
-  transform: (_doc, ret) => {
+  transform: (doc, ret) => {
     ret.id = String(ret._id);
+
+    const productsPopulated = Boolean(doc?.populated?.("items.product_id"));
+    ret.items = (ret.items || []).map((item) => {
+      const nextItem = { ...item };
+      if (nextItem.product_id && !productsPopulated) {
+        nextItem.product_id = nextItem.product_id.id ? String(nextItem.product_id.id) : String(nextItem.product_id);
+      }
+      return nextItem;
+    });
+
+    preserveOrFlattenReference(doc, ret, "requestedBy");
+    preserveOrFlattenReference(doc, ret, "approvedBy");
+    preserveOrFlattenReference(doc, ret, "deliverZone_id");
+
     delete ret._id;
     delete ret.__v;
-    if (ret.createdBy) {
-      if (typeof ret.createdBy === "object" && ret.createdBy !== null && ret.createdBy._id) {
-        ret.createdBy = {
-          id: String(ret.createdBy._id),
-          name: ret.createdBy.name,
-          email: ret.createdBy.email
-        };
-      } else {
-        ret.createdBy = String(ret.createdBy);
-      }
-    }
-    for (const item of ret.items || []) {
-      if (item.productId) item.productId = String(item.productId);
-    }
-    for (const row of ret.insufficientItems || []) {
-      if (row.productId) row.productId = String(row.productId);
-    }
     return ret;
   }
 });
 
 export const Order = mongoose.models.Order || mongoose.model("Order", orderSchema);
-export const ORDER_PRIORITY_VALUES = ORDER_PRIORITIES;
-export const ORDER_STATUS_VALUES = ORDER_STATUSES;
+
+export async function ensureOrderCollectionIndexes() {
+  const indexes = await Order.collection.indexes();
+  const legacyOrderNoIndex = indexes.find((index) => index.name === "orderNo_1" && index.unique);
+  const incompatibleOrderNumberIndex = indexes.find(
+    (index) => index.name === "orderNumber_1" && index.unique && !index.partialFilterExpression
+  );
+
+  if (legacyOrderNoIndex) {
+    await Order.collection.dropIndex(legacyOrderNoIndex.name);
+    console.log(`[Order] Dropped legacy unique index: ${legacyOrderNoIndex.name}`);
+  }
+
+  if (incompatibleOrderNumberIndex) {
+    await Order.collection.dropIndex(incompatibleOrderNumberIndex.name);
+    console.log(`[Order] Dropped incompatible unique index: ${incompatibleOrderNumberIndex.name}`);
+  }
+
+  await Order.init();
+}

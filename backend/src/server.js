@@ -6,13 +6,17 @@ import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
 import protectedRoutes from "./routes/protected.js";
 import systemRoutes from "./routes/system.js";
+import robotControlRoutes from "./routes/robotControl.js";
 import robotRoutes from "./routes/robots.js";
 import taskRoutes from "./routes/tasks.js";
 import zoneRoutes from "./routes/zones.js";
-import inventoryRoutes from "./routes/inventory.js";
-import fulfillmentRoutes from "./routes/fulfillment.js";
 import dashboardRoutes from "./routes/dashboard.js";
+import logsRoutes from "./routes/logs.js";
+import inventoryRoutes from "./routes/inventory.js";
+import ordersRoutes from "./routes/orders.js";
+import picklistsRoutes from "./routes/picklists.js";
 import { connectDb, isDbConnected, mongoose } from "./db.js";
+import { ensureOrderCollectionIndexes } from "./models/Order.js";
 import { Robot } from "./models/Robot.js";
 import { Zone } from "./models/Zone.js";
 
@@ -21,18 +25,21 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173")
+const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173,http://127.0.0.1:5173")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
 
+const localOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/i;
+
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin || allowedOrigins.includes(origin) || localOriginPattern.test(origin)) {
         return callback(null, true);
       }
-      return callback(new Error("CORS blocked for this origin."));
+      console.warn(`[CORS] Blocked request from origin: ${origin}`);
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
     },
     credentials: true
   })
@@ -48,18 +55,21 @@ app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/protected", protectedRoutes);
 app.use("/api/system", systemRoutes);
+app.use("/api/robot", robotControlRoutes);
 app.use("/api/robots", robotRoutes);
 app.use("/api/tasks", taskRoutes);
 app.use("/api/zones", zoneRoutes);
-app.use("/api", inventoryRoutes);
-app.use("/api", fulfillmentRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/logs", logsRoutes);
+app.use("/api/inventory", inventoryRoutes);
+app.use("/api/orders", ordersRoutes);
+app.use("/api/picklists", picklistsRoutes);
 
 app.use((_req, res) => res.status(404).json({ message: "Not found." }));
 
 async function ensureSingleRobot() {
   const robots = await Robot.find({}).sort({ createdAt: 1 });
-  const chargeZone = await Zone.findOne({ code: "ZONE_CHARGE" });
+  const chargeZone = await Zone.findOne({ code: "HOME" });
 
   if (robots.length === 0) {
     const created = await Robot.create({
@@ -78,19 +88,26 @@ async function ensureSingleRobot() {
 }
 
 const DEFAULT_ZONES = Object.freeze([
-  { code: "ZONE_CHARGE", label: "Charging Dock", type: "CHARGING" },
-  { code: "ZONE_A", label: "Zone A (Receiving)", type: "PICKUP" },
-  { code: "ZONE_B", label: "Zone B (Storage)", type: "PICKUP" },
-  { code: "ZONE_C", label: "Zone C (Packing)", type: "PICKUP" },
-  { code: "ZONE_D", label: "Zone D (Shipping)", type: "DROPOFF" },
-  { code: "ZONE_E", label: "Zone E (QA)", type: "DROPOFF" }
+  { code: "HOME", name: "HOME", description: "Home base for the robot.", label: "HOME", type: "CHARGING", isHome: true },
+  { code: "Z1", name: "Z1", description: "Primary handling zone.", label: "Z1", type: "PICKUP", isHome: false },
+  { code: "Z2", name: "Z2", description: "Secondary handling zone.", label: "Z2", type: "PICKUP", isHome: false },
+  { code: "Z3", name: "Z3", description: "Tertiary handling zone.", label: "Z3", type: "DROPOFF", isHome: false }
 ]);
 
 async function ensureZones() {
   for (const zone of DEFAULT_ZONES) {
     await Zone.findOneAndUpdate(
       { code: zone.code },
-      { $set: { label: zone.label, type: zone.type, active: true } },
+      {
+        $set: {
+          name: zone.name,
+          description: zone.description,
+          label: zone.label,
+          type: zone.type,
+          isHome: zone.isHome,
+          active: true
+        }
+      },
       { upsert: true, new: true }
     );
   }
@@ -102,6 +119,7 @@ async function start() {
     const dbName = mongoose.connection.name;
     console.log(`MongoDB connected ✅ (db=${dbName})`);
 
+    await ensureOrderCollectionIndexes();
     await ensureZones();
     await ensureSingleRobot();
 

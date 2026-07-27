@@ -1,32 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  ArrowDown,
-  ArrowRightLeft,
-  ArrowUp,
-  ClipboardList,
-  Package,
-  PackagePlus,
-  Pencil,
-  RefreshCw,
-  Trash2,
-  TriangleAlert,
-  X
-} from "lucide-react";
-import {
-  createProduct,
-  deleteProduct,
-  getInventorySummary,
-  getReorderSuggestions,
-  listProducts,
-  listStockMovements,
-  stockIn,
-  stockOut,
-  stockTransfer,
-  updateProduct
-} from "../lib/api";
-import { formatDateTime, getErrorMessage } from "../lib/formatters";
-import { useAuth } from "../context/AuthContext";
-import { useToast } from "../context/ToastContext";
+import { AlertTriangle, PackagePlus, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/Card";
@@ -37,459 +10,212 @@ import { EmptyState } from "../components/EmptyState";
 import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { PageHeader } from "../components/PageHeader";
 import { PageTransition } from "../components/PageTransition";
-import { StatCard } from "../components/StatCard";
+import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
+import { apiFetch } from "../lib/api";
+import { formatWeight, getErrorMessage } from "../lib/formatters";
 
-const emptyProductForm = {
-  sku: "",
-  name: "",
-  category: "",
-  weight: "0",
-  currentStock: "0",
-  minStock: "0",
-  maxStock: "100",
-  location: "",
-  supplierLeadTimeDays: "0"
-};
-
-const emptyMovementForm = {
-  productId: "",
-  type: "IN",
-  quantity: "1",
-  fromLocation: "",
-  toLocation: "",
-  reason: ""
-};
-
-const emptySummary = {
-  totalSKUs: 0,
-  totalStockUnits: 0,
-  lowStockCount: 0,
-  overstockCount: 0,
-  normalCount: 0,
-  reorderRequiredCount: 0
-};
-
-const stockStatusTone = {
-  NORMAL: "success",
-  LOW_STOCK: "error",
-  OVERSTOCK: "warning"
-};
-
-const riskTone = {
-  LOW: "success",
-  MEDIUM: "warning",
-  HIGH: "error"
-};
-
-const movementIcons = {
-  IN: ArrowDown,
-  OUT: ArrowUp,
-  TRANSFER: ArrowRightLeft
-};
-
-function formatNumber(value) {
-  return new Intl.NumberFormat("en-US").format(Number(value || 0));
-}
-
-function productToForm(product) {
-  return {
-    sku: product.sku || "",
-    name: product.name || "",
-    category: product.category || "",
-    weight: String(product.weight ?? 0),
-    currentStock: String(product.currentStock ?? 0),
-    minStock: String(product.minStock ?? 0),
-    maxStock: String(product.maxStock ?? 100),
-    location: product.location || "",
-    supplierLeadTimeDays: String(product.supplierLeadTimeDays ?? 0)
-  };
-}
-
-function buildProductPayload(form) {
-  return {
-    sku: form.sku.trim(),
-    name: form.name.trim(),
-    category: form.category.trim(),
-    weight: Number(form.weight || 0),
-    currentStock: Number(form.currentStock || 0),
-    minStock: Number(form.minStock || 0),
-    maxStock: Number(form.maxStock || 0),
-    location: form.location.trim(),
-    supplierLeadTimeDays: Number(form.supplierLeadTimeDays || 0)
-  };
-}
-
-function ProductModal({
-  open,
-  editingProduct,
-  form,
-  saving,
-  onClose,
-  onChange,
-  onSubmit
-}) {
-  if (!open) return null;
-
-  const title = editingProduct ? "Edit Product" : "Add Product";
-
+function InventoryTableSkeleton() {
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center px-4 py-6">
-      <button
-        type="button"
-        className="absolute inset-0 bg-slate-950/75 backdrop-blur-sm"
-        onClick={onClose}
-        aria-label="Close product form"
-      />
-      <section className="surface-card relative z-10 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-        <div className="relative z-10 flex items-center justify-between gap-4 border-b border-white/10 px-6 py-5">
-          <div>
-            <h2 className="brand-heading text-xl font-semibold text-white">{title}</h2>
-            <p className="mt-1 text-sm text-slate-400">SKU profile and stock thresholds.</p>
-          </div>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close product form">
-            <X className="h-5 w-5" />
-          </Button>
-        </div>
-
-        <form className="relative z-10 grid gap-5 px-6 py-6" onSubmit={onSubmit}>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <div className="grid gap-2">
-              <label className="text-sm font-medium text-slate-300">SKU</label>
-              <Input value={form.sku} onChange={(event) => onChange("sku", event.target.value)} required />
-            </div>
-            <div className="grid gap-2 md:col-span-1 xl:col-span-2">
-              <label className="text-sm font-medium text-slate-300">Product Name</label>
-              <Input value={form.name} onChange={(event) => onChange("name", event.target.value)} required />
-            </div>
-            <div className="grid gap-2">
-              <label className="text-sm font-medium text-slate-300">Category</label>
-              <Input value={form.category} onChange={(event) => onChange("category", event.target.value)} />
-            </div>
-            <div className="grid gap-2">
-              <label className="text-sm font-medium text-slate-300">Weight</label>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.weight}
-                onChange={(event) => onChange("weight", event.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <label className="text-sm font-medium text-slate-300">Current Stock</label>
-              <Input
-                type="number"
-                min="0"
-                step="1"
-                value={form.currentStock}
-                onChange={(event) => onChange("currentStock", event.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <label className="text-sm font-medium text-slate-300">Minimum Stock</label>
-              <Input
-                type="number"
-                min="0"
-                step="1"
-                value={form.minStock}
-                onChange={(event) => onChange("minStock", event.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <label className="text-sm font-medium text-slate-300">Maximum Stock</label>
-              <Input
-                type="number"
-                min="0"
-                step="1"
-                value={form.maxStock}
-                onChange={(event) => onChange("maxStock", event.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <label className="text-sm font-medium text-slate-300">Location</label>
-              <Input value={form.location} onChange={(event) => onChange("location", event.target.value)} />
-            </div>
-            <div className="grid gap-2">
-              <label className="text-sm font-medium text-slate-300">Supplier Lead Time Days</label>
-              <Input
-                type="number"
-                min="0"
-                step="1"
-                value={form.supplierLeadTimeDays}
-                onChange={(event) => onChange("supplierLeadTimeDays", event.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-3 border-t border-white/10 pt-5 sm:flex-row sm:justify-end">
-            <Button variant="secondary" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" isLoading={saving}>
-              {editingProduct ? "Save Product" : "Create Product"}
-            </Button>
-          </div>
-        </form>
-      </section>
+    <div className="space-y-3">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <LoadingSkeleton key={index} className="h-16" />
+      ))}
     </div>
   );
 }
 
-export default function Inventory() {
-  const { token, logout } = useAuth();
-  const toast = useToast();
+function getStockTone(status) {
+  if (status === "LOW") return "danger";
+  if (status === "OVERSTOCK") return "warning";
+  return "success";
+}
 
+function getStockLabel(status) {
+  if (status === "LOW") return "Low stock";
+  if (status === "OVERSTOCK") return "Overstock";
+  return "Normal";
+}
+
+export default function Inventory() {
+  const { token, user } = useAuth();
+  const toast = useToast();
   const [products, setProducts] = useState([]);
-  const [summary, setSummary] = useState(emptySummary);
-  const [movements, setMovements] = useState([]);
-  const [reorderSuggestions, setReorderSuggestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
-  const [lastUpdated, setLastUpdated] = useState(null);
-  const [productModalOpen, setProductModalOpen] = useState(false);
+  const [showForm, setShowForm] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
-  const [productForm, setProductForm] = useState(emptyProductForm);
-  const [productSaving, setProductSaving] = useState(false);
   const [productToDelete, setProductToDelete] = useState(null);
-  const [deleteLoading, setDeleteLoading] = useState(false);
-  const [movementForm, setMovementForm] = useState(emptyMovementForm);
-  const [movementSaving, setMovementSaving] = useState(false);
+  const [zones, setZones] = useState([]);
+  const [formState, setFormState] = useState({
+    sku: "",
+    name: "",
+    category: "",
+    weightKg: "1",
+    quantity: "0",
+    minStockLevel: "5",
+    maxStockLevel: "100",
+    zone_id: ""
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(false);
 
-  const sortedProducts = useMemo(
-    () => [...products].sort((left, right) => String(left.sku || "").localeCompare(String(right.sku || ""))),
-    [products]
-  );
+  const isManager = user?.role === "manager";
+  const lowStockProducts = useMemo(() => products.filter((product) => product.stockStatus === "LOW"), [products]);
 
-  const selectedProduct = useMemo(
-    () => products.find((product) => product.id === movementForm.productId) || null,
-    [movementForm.productId, products]
-  );
-
-  const sortedReorderSuggestions = useMemo(
-    () =>
-      [...reorderSuggestions].sort(
-        (left, right) => Number(right.suggestedReorderQty || 0) - Number(left.suggestedReorderQty || 0)
-      ),
-    [reorderSuggestions]
-  );
-
-  const loadInventory = useCallback(async ({ silent = false } = {}) => {
-    if (!token) return;
-
-    if (silent) setRefreshing(true);
-    else setLoading(true);
+  const loadProducts = useCallback(async () => {
+    if (!token) {
+      setProducts([]);
+      setLoading(false);
+      return;
+    }
 
     try {
-      const [productResult, summaryResult, movementResult, reorderResult] = await Promise.all([
-        listProducts(token),
-        getInventorySummary(token),
-        listStockMovements(token, { limit: 100 }),
-        getReorderSuggestions(token)
-      ]);
-
-      setProducts(productResult.products || []);
-      setSummary({ ...emptySummary, ...(summaryResult || {}) });
-      setMovements(movementResult.movements || []);
-      setReorderSuggestions(reorderResult.products || []);
+      const data = await apiFetch("/api/inventory", { method: "GET", token });
+      setProducts(data.products || []);
       setError("");
-      setLastUpdated(new Date().toISOString());
     } catch (loadError) {
-      if (loadError?.status === 401) {
-        toast.error("Session expired. Please sign in again.");
-        logout();
-        return;
-      }
-      const message = getErrorMessage(loadError, "Failed to load inventory data.");
-      setError(message);
-      if (!silent) toast.error(message);
+      setProducts([]);
+      setError(getErrorMessage(loadError, "Could not load inventory."));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [logout, toast, token]);
+  }, [token]);
 
-  useEffect(() => {
-    loadInventory();
-  }, [loadInventory]);
-
-  useEffect(() => {
-    setMovementForm((current) => {
-      const currentProduct = products.find((product) => product.id === current.productId);
-      if (currentProduct) return current;
-      if (products.length === 0) return { ...current, productId: "", fromLocation: "" };
-
-      const firstProduct = products[0];
-      return {
-        ...current,
-        productId: firstProduct.id,
-        fromLocation: firstProduct.location || ""
-      };
-    });
-  }, [products]);
-
-  function updateProductForm(field, value) {
-    setProductForm((current) => ({ ...current, [field]: value }));
-  }
-
-  function openCreateProduct() {
-    setEditingProduct(null);
-    setProductForm(emptyProductForm);
-    setProductModalOpen(true);
-  }
-
-  function openEditProduct(product) {
-    setEditingProduct(product);
-    setProductForm(productToForm(product));
-    setProductModalOpen(true);
-  }
-
-  async function handleProductSubmit(event) {
-    event.preventDefault();
-    setProductSaving(true);
-
+  const loadZones = useCallback(async () => {
+    if (!token) return;
     try {
-      const payload = buildProductPayload(productForm);
+      const data = await apiFetch("/api/zones", { method: "GET", token });
+      setZones(data.zones || []);
+    } catch {
+      setZones([]);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    setLoading(true);
+    loadProducts();
+    loadZones();
+  }, [loadProducts, loadZones]);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await Promise.allSettled([loadProducts(), loadZones()]);
+  }
+
+  function resetForm() {
+    setFormState({
+      sku: "",
+      name: "",
+      category: "",
+      weightKg: "1",
+      quantity: "0",
+      minStockLevel: "5",
+      maxStockLevel: "100",
+      zone_id: zones[0]?.id || ""
+    });
+    setEditingProduct(null);
+  }
+
+  function openCreateModal() {
+    resetForm();
+    setShowForm(true);
+  }
+
+  function openEditModal(product) {
+    setEditingProduct(product);
+    setFormState({
+      sku: product.sku || "",
+      name: product.name || "",
+      category: product.category || "",
+      weightKg: String(product.weightKg ?? 1),
+      quantity: String(product.quantity ?? 0),
+      minStockLevel: String(product.minStockLevel ?? 5),
+      maxStockLevel: String(product.maxStockLevel ?? 100),
+      zone_id: product.zone_id || zones[0]?.id || ""
+    });
+    setShowForm(true);
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    if (!token) return;
+
+    const payload = {
+      sku: formState.sku,
+      name: formState.name,
+      category: formState.category || null,
+      weightKg: Number(formState.weightKg),
+      quantity: Number(formState.quantity),
+      minStockLevel: Number(formState.minStockLevel),
+      maxStockLevel: Number(formState.maxStockLevel),
+      zone_id: formState.zone_id
+    };
+
+    setSubmitting(true);
+    try {
       if (editingProduct) {
-        await updateProduct(token, editingProduct.id, payload);
+        await apiFetch(`/api/inventory/${editingProduct.id}`, {
+          method: "PATCH",
+          token,
+          body: JSON.stringify(payload)
+        });
         toast.success("Product updated.");
       } else {
-        await createProduct(token, payload);
+        await apiFetch("/api/inventory", {
+          method: "POST",
+          token,
+          body: JSON.stringify(payload)
+        });
         toast.success("Product created.");
       }
-      setProductModalOpen(false);
-      setEditingProduct(null);
-      await loadInventory({ silent: true });
+
+      setShowForm(false);
+      resetForm();
+      await loadProducts();
     } catch (submitError) {
-      if (submitError?.status === 401) {
-        toast.error("Session expired. Please sign in again.");
-        logout();
-        return;
-      }
-      toast.error(getErrorMessage(submitError, "Product save failed."));
+      toast.error(getErrorMessage(submitError, "Could not save product."));
     } finally {
-      setProductSaving(false);
+      setSubmitting(false);
     }
   }
 
-  async function handleDeleteProduct() {
-    if (!productToDelete) return;
-    setDeleteLoading(true);
-
+  async function handleDelete(product) {
+    if (!token) return;
+    setPendingDelete(true);
     try {
-      await deleteProduct(token, productToDelete.id);
+      await apiFetch(`/api/inventory/${product.id}`, { method: "DELETE", token });
       toast.success("Product deleted.");
+      await loadProducts();
       setProductToDelete(null);
-      await loadInventory({ silent: true });
     } catch (deleteError) {
-      if (deleteError?.status === 401) {
-        toast.error("Session expired. Please sign in again.");
-        logout();
-        return;
-      }
-      toast.error(getErrorMessage(deleteError, "Product delete failed."));
+      toast.error(getErrorMessage(deleteError, "Could not delete product."));
     } finally {
-      setDeleteLoading(false);
-    }
-  }
-
-  function updateMovementProduct(productId) {
-    const product = products.find((item) => item.id === productId);
-    setMovementForm((current) => ({
-      ...current,
-      productId,
-      fromLocation: product?.location || current.fromLocation
-    }));
-  }
-
-  async function handleMovementSubmit(event) {
-    event.preventDefault();
-
-    if (!movementForm.productId) {
-      toast.error("Select a product before recording movement.");
-      return;
-    }
-
-    setMovementSaving(true);
-
-    try {
-      const payload = {
-        productId: movementForm.productId,
-        quantity: Number(movementForm.quantity || 0),
-        reason: movementForm.reason.trim()
-      };
-
-      if (movementForm.type === "IN") {
-        await stockIn(token, { ...payload, toLocation: movementForm.toLocation.trim() });
-      } else if (movementForm.type === "OUT") {
-        await stockOut(token, { ...payload, fromLocation: movementForm.fromLocation.trim() });
-      } else {
-        await stockTransfer(token, {
-          ...payload,
-          fromLocation: movementForm.fromLocation.trim(),
-          toLocation: movementForm.toLocation.trim()
-        });
-      }
-
-      toast.success("Stock movement recorded.");
-      setMovementForm((current) => ({
-        ...current,
-        quantity: "1",
-        reason: ""
-      }));
-      await loadInventory({ silent: true });
-    } catch (movementError) {
-      if (movementError?.status === 401) {
-        toast.error("Session expired. Please sign in again.");
-        logout();
-        return;
-      }
-      toast.error(getErrorMessage(movementError, "Stock movement failed."));
-    } finally {
-      setMovementSaving(false);
+      setPendingDelete(false);
     }
   }
 
   return (
     <PageTransition>
       <PageHeader
-        title="Inventory Intelligence"
-        description="Manage warehouse SKUs, stock movement history, and risk-driven reorder signals."
-        lastUpdated={lastUpdated}
+        title="Inventory"
+        description="Track stock levels, manage storage zones, and surface reorder alerts at a glance."
         actions={
-          <div className="flex w-full flex-col gap-3 sm:flex-row">
-            <Button variant="secondary" onClick={() => loadInventory()} isLoading={refreshing}>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={handleRefresh} isLoading={refreshing}>
               <RefreshCw className="h-4 w-4" />
               Refresh
             </Button>
-            <Button onClick={openCreateProduct}>
-              <PackagePlus className="h-4 w-4" />
-              Add Product
-            </Button>
+            {isManager ? (
+              <Button onClick={openCreateModal}>
+                <Plus className="h-4 w-4" />
+                Add Product
+              </Button>
+            ) : null}
           </div>
         }
-      />
-
-      <ProductModal
-        open={productModalOpen}
-        editingProduct={editingProduct}
-        form={productForm}
-        saving={productSaving}
-        onClose={() => setProductModalOpen(false)}
-        onChange={updateProductForm}
-        onSubmit={handleProductSubmit}
-      />
-
-      <ConfirmDialog
-        open={Boolean(productToDelete)}
-        title="Delete product?"
-        description="This removes the product record. Existing movement history remains in the audit trail."
-        icon={<Trash2 className="h-5 w-5 text-rose-200" />}
-        confirmText="Delete product"
-        confirmLoading={deleteLoading}
-        destructive
-        onCancel={() => setProductToDelete(null)}
-        onConfirm={handleDeleteProduct}
       />
 
       {error ? (
@@ -498,125 +224,76 @@ export default function Inventory() {
         </div>
       ) : null}
 
-      {loading ? (
-        <div className="grid gap-4 xl:grid-cols-5">
-          {Array.from({ length: 5 }).map((_, index) => (
-            <LoadingSkeleton key={index} className="h-[132px]" />
-          ))}
+      {lowStockProducts.length > 0 ? (
+        <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100 backdrop-blur-sm">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4" />
+            <span>
+              {lowStockProducts.length} item{lowStockProducts.length === 1 ? "" : "s"} are below minimum stock.
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {lowStockProducts.map((product) => (
+              <a key={product.id} href={`#product-${product.id}`} className="font-medium underline underline-offset-4">
+                {product.sku}
+              </a>
+            ))}
+          </div>
         </div>
-      ) : (
-        <div className="grid gap-4 xl:grid-cols-5">
-          <StatCard
-            label="Total SKUs"
-            value={formatNumber(summary.totalSKUs)}
-            helper="Active product records"
-            tone="primary"
-            icon={<Package className="h-4 w-4" />}
-          />
-          <StatCard
-            label="Total Stock Units"
-            value={formatNumber(summary.totalStockUnits)}
-            helper="Units on hand"
-            tone="info"
-            icon={<ClipboardList className="h-4 w-4" />}
-          />
-          <StatCard
-            label="Low Stock Items"
-            value={formatNumber(summary.lowStockCount)}
-            helper="At or below minimum"
-            tone="error"
-            icon={<TriangleAlert className="h-4 w-4" />}
-          />
-          <StatCard
-            label="Overstock Items"
-            value={formatNumber(summary.overstockCount)}
-            helper="At or above maximum"
-            tone="warning"
-            icon={<ArrowUp className="h-4 w-4" />}
-          />
-          <StatCard
-            label="Reorder Required"
-            value={formatNumber(summary.reorderRequiredCount)}
-            helper="Suggested reorder qty > 0"
-            tone="success"
-            icon={<PackagePlus className="h-4 w-4" />}
-          />
-        </div>
-      )}
+      ) : null}
 
-      <Card className="mt-6">
+      <Card>
         <CardHeader>
-          <CardTitle>Product Inventory</CardTitle>
-          <CardDescription>SKU stock position, storage location, and calculated risk.</CardDescription>
+          <CardTitle className="flex items-center gap-2">
+            <PackagePlus className="h-5 w-5 text-cyan-300" />
+            Inventory Catalog
+          </CardTitle>
+          <CardDescription>Monitor stock levels and storage placement for each product.</CardDescription>
         </CardHeader>
         <CardContent>
-          {loading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 6 }).map((_, index) => (
-                <LoadingSkeleton key={index} className="h-16" />
-              ))}
-            </div>
-          ) : sortedProducts.length === 0 ? (
-            <EmptyState title="No products yet" description="Create a product to start tracking stock risk." />
+          {loading && products.length === 0 ? (
+            <InventoryTableSkeleton />
+          ) : products.length === 0 ? (
+            <EmptyState title="No products yet" description="Add your first product to start tracking inventory." />
           ) : (
             <div className="overflow-x-auto thin-scrollbar">
               <table className="min-w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-white/10 text-slate-400">
                     <th className="pb-3 font-medium">SKU</th>
-                    <th className="pb-3 font-medium">Product Name</th>
+                    <th className="pb-3 font-medium">Name</th>
                     <th className="pb-3 font-medium">Category</th>
-                    <th className="pb-3 font-medium">Current Stock</th>
-                    <th className="pb-3 font-medium">Location</th>
-                    <th className="pb-3 font-medium">Stock Status</th>
-                    <th className="pb-3 font-medium">Risk Level</th>
-                    <th className="pb-3 font-medium">Suggested Reorder</th>
-                    <th className="pb-3 font-medium text-right">Actions</th>
+                    <th className="pb-3 font-medium">Weight</th>
+                    <th className="pb-3 font-medium">Quantity</th>
+                    <th className="pb-3 font-medium">Zone</th>
+                    <th className="pb-3 font-medium">Status</th>
+                    {isManager ? <th className="pb-3 font-medium text-right">Actions</th> : null}
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedProducts.map((product) => (
-                    <tr key={product.id} className="border-b border-white/10 last:border-b-0">
+                  {products.map((product) => (
+                    <tr id={`product-${product.id}`} key={product.id} className="border-b border-white/10 last:border-b-0">
                       <td className="py-4 font-mono text-slate-300">{product.sku}</td>
                       <td className="py-4 text-white">{product.name}</td>
-                      <td className="py-4 text-slate-300">{product.category || "--"}</td>
-                      <td className="py-4 text-white">{formatNumber(product.currentStock)}</td>
-                      <td className="py-4 text-slate-300">{product.location || "--"}</td>
+                      <td className="py-4 text-slate-300">{product.category || "—"}</td>
+                      <td className="py-4 text-slate-300">{formatWeight(product.weightKg)} kg</td>
+                      <td className="py-4 text-slate-300">{product.quantity}</td>
+                      <td className="py-4 text-slate-300">{product.zone_label || product.zone_code || "—"}</td>
                       <td className="py-4">
-                        <Badge tone={stockStatusTone[product.stockStatus] || "neutral"}>
-                          {product.stockStatus || "NORMAL"}
-                        </Badge>
+                        <Badge tone={getStockTone(product.stockStatus)}>{getStockLabel(product.stockStatus)}</Badge>
                       </td>
-                      <td className="py-4">
-                        <Badge tone={riskTone[product.riskLevel] || "neutral"}>
-                          {product.riskLevel || "LOW"}
-                        </Badge>
-                      </td>
-                      <td className="py-4 text-white">{formatNumber(product.suggestedReorderQty)}</td>
-                      <td className="py-4">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-9 w-9"
-                            onClick={() => openEditProduct(product)}
-                            aria-label={`Edit ${product.sku}`}
-                            title="Edit product"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-9 w-9 text-rose-200 hover:text-rose-100"
-                            onClick={() => setProductToDelete(product)}
-                            aria-label={`Delete ${product.sku}`}
-                            title="Delete product"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </td>
+                      {isManager ? (
+                        <td className="py-4 text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button type="button" size="icon" variant="secondary" onClick={() => openEditModal(product)}>
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button type="button" size="icon" variant="ghost" onClick={() => setProductToDelete(product)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
                 </tbody>
@@ -626,190 +303,86 @@ export default function Inventory() {
         </CardContent>
       </Card>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Stock Movement</CardTitle>
-            <CardDescription>Record receiving, issuing, and location transfers.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form className="grid gap-4" onSubmit={handleMovementSubmit}>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                <div className="grid gap-2 xl:col-span-2">
-                  <label className="text-sm font-medium text-slate-300">Product</label>
-                  <Select
-                    value={movementForm.productId}
-                    onChange={(event) => updateMovementProduct(event.target.value)}
-                    required
-                  >
-                    {products.length === 0 ? <option value="">No products available</option> : null}
-                    {sortedProducts.map((product) => (
-                      <option key={product.id} value={product.id}>
-                        {product.sku} - {product.name}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                <div className="grid gap-2">
-                  <label className="text-sm font-medium text-slate-300">Movement Type</label>
-                  <Select
-                    value={movementForm.type}
-                    onChange={(event) =>
-                      setMovementForm((current) => ({
-                        ...current,
-                        type: event.target.value
-                      }))
-                    }
-                  >
-                    <option value="IN">IN</option>
-                    <option value="OUT">OUT</option>
-                    <option value="TRANSFER">TRANSFER</option>
-                  </Select>
-                </div>
-                <div className="grid gap-2">
-                  <label className="text-sm font-medium text-slate-300">Quantity</label>
-                  <Input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={movementForm.quantity}
-                    onChange={(event) =>
-                      setMovementForm((current) => ({ ...current, quantity: event.target.value }))
-                    }
-                    required
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <label className="text-sm font-medium text-slate-300">From Location</label>
-                  <Input
-                    value={movementForm.fromLocation}
-                    placeholder={selectedProduct?.location || "Aisle A"}
-                    onChange={(event) =>
-                      setMovementForm((current) => ({ ...current, fromLocation: event.target.value }))
-                    }
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <label className="text-sm font-medium text-slate-300">To Location</label>
-                  <Input
-                    value={movementForm.toLocation}
-                    placeholder="Aisle B"
-                    onChange={(event) =>
-                      setMovementForm((current) => ({ ...current, toLocation: event.target.value }))
-                    }
-                  />
-                </div>
+      {showForm ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-3xl border border-white/10 bg-slate-900/95 p-6 shadow-2xl">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-xl font-semibold text-white">{editingProduct ? "Edit product" : "Add product"}</h3>
+                <p className="mt-1 text-sm text-slate-400">Create or update stock records for the warehouse inventory.</p>
+              </div>
+              <Button type="button" variant="ghost" onClick={() => setShowForm(false)}>
+                Close
+              </Button>
+            </div>
+
+            <form className="mt-6 grid gap-4 md:grid-cols-2" onSubmit={handleSubmit}>
+              <div className="grid gap-2">
+                <label className="text-sm font-medium text-slate-300">SKU</label>
+                <Input value={formState.sku} onChange={(event) => setFormState((current) => ({ ...current, sku: event.target.value }))} required />
               </div>
               <div className="grid gap-2">
-                <label className="text-sm font-medium text-slate-300">Reason</label>
-                <textarea
-                  rows={3}
-                  className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-xl transition-all duration-300 ease-out placeholder:text-slate-400 hover:border-white/15 hover:bg-white/[0.07] focus:border-blue-400/50 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-2 focus:ring-offset-slate-950/80"
-                  value={movementForm.reason}
-                  onChange={(event) =>
-                    setMovementForm((current) => ({ ...current, reason: event.target.value }))
-                  }
-                />
+                <label className="text-sm font-medium text-slate-300">Name</label>
+                <Input value={formState.name} onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))} required />
               </div>
-              <div className="flex justify-end">
-                <Button type="submit" isLoading={movementSaving} disabled={products.length === 0}>
-                  {(() => {
-                    const Icon = movementIcons[movementForm.type] || ArrowRightLeft;
-                    return <Icon className="h-4 w-4" />;
-                  })()}
-                  Record Movement
+              <div className="grid gap-2">
+                <label className="text-sm font-medium text-slate-300">Category</label>
+                <Input value={formState.category} onChange={(event) => setFormState((current) => ({ ...current, category: event.target.value }))} placeholder="e.g. Electronics" />
+              </div>
+              <div className="grid gap-2">
+                <label className="text-sm font-medium text-slate-300">Weight (kg)</label>
+                <Input type="number" min="0" step="0.1" value={formState.weightKg} onChange={(event) => setFormState((current) => ({ ...current, weightKg: event.target.value }))} required />
+              </div>
+              <div className="grid gap-2">
+                <label className="text-sm font-medium text-slate-300">Quantity</label>
+                <Input type="number" min="0" value={formState.quantity} onChange={(event) => setFormState((current) => ({ ...current, quantity: event.target.value }))} required />
+              </div>
+              <div className="grid gap-2">
+                <label className="text-sm font-medium text-slate-300">Minimum Stock</label>
+                <Input type="number" min="0" value={formState.minStockLevel} onChange={(event) => setFormState((current) => ({ ...current, minStockLevel: event.target.value }))} required />
+              </div>
+              <div className="grid gap-2">
+                <label className="text-sm font-medium text-slate-300">Maximum Stock</label>
+                <Input type="number" min="0" value={formState.maxStockLevel} onChange={(event) => setFormState((current) => ({ ...current, maxStockLevel: event.target.value }))} required />
+              </div>
+              <div className="grid gap-2">
+                <label className="text-sm font-medium text-slate-300">Storage Zone</label>
+                <Select value={formState.zone_id} onChange={(event) => setFormState((current) => ({ ...current, zone_id: event.target.value }))} required>
+                  <option value="">Select storage zone</option>
+                  {zones.map((zone) => (
+                    <option key={zone.id} value={zone.id}>
+                      {zone.label || zone.code}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              <div className="md:col-span-2 flex justify-end gap-3">
+                <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" isLoading={submitting}>
+                  {editingProduct ? "Save changes" : "Create product"}
                 </Button>
               </div>
             </form>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
+      ) : null}
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Reorder Suggestions</CardTitle>
-            <CardDescription>Low-stock SKUs ranked by suggested quantity.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {loading ? (
-              Array.from({ length: 4 }).map((_, index) => <LoadingSkeleton key={index} className="h-16" />)
-            ) : sortedReorderSuggestions.length === 0 ? (
-              <EmptyState title="No reorder required" description="All tracked products are above reorder risk." />
-            ) : (
-              sortedReorderSuggestions.map((product) => (
-                <div
-                  key={product.id}
-                  className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-xl"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate font-mono text-sm text-slate-300">{product.sku}</div>
-                      <div className="mt-1 truncate text-sm font-semibold text-white">{product.name}</div>
-                    </div>
-                    <Badge tone="error">HIGH</Badge>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between text-sm">
-                    <span className="text-slate-400">Suggested reorder</span>
-                    <span className="font-semibold text-white">{formatNumber(product.suggestedReorderQty)}</span>
-                  </div>
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Stock Movement History</CardTitle>
-          <CardDescription>Latest receiving, issuing, and transfer events.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, index) => (
-                <LoadingSkeleton key={index} className="h-16" />
-              ))}
-            </div>
-          ) : movements.length === 0 ? (
-            <EmptyState title="No stock movements" description="Movement history appears after stock changes." />
-          ) : (
-            <div className="overflow-x-auto thin-scrollbar">
-              <table className="min-w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-white/10 text-slate-400">
-                    <th className="pb-3 font-medium">Product</th>
-                    <th className="pb-3 font-medium">Type</th>
-                    <th className="pb-3 font-medium">Quantity</th>
-                    <th className="pb-3 font-medium">From</th>
-                    <th className="pb-3 font-medium">To</th>
-                    <th className="pb-3 font-medium">Reason</th>
-                    <th className="pb-3 font-medium">Date</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {movements.map((movement) => (
-                    <tr key={movement.id} className="border-b border-white/10 last:border-b-0">
-                      <td className="py-4 text-white">
-                        {movement.product ? `${movement.product.sku} - ${movement.product.name}` : "Deleted product"}
-                      </td>
-                      <td className="py-4">
-                        <Badge tone={movement.type === "IN" ? "success" : movement.type === "OUT" ? "warning" : "info"}>
-                          {movement.type}
-                        </Badge>
-                      </td>
-                      <td className="py-4 text-white">{formatNumber(movement.quantity)}</td>
-                      <td className="py-4 text-slate-300">{movement.fromLocation || "--"}</td>
-                      <td className="py-4 text-slate-300">{movement.toLocation || "--"}</td>
-                      <td className="py-4 text-slate-300">{movement.reason || "--"}</td>
-                      <td className="py-4 text-slate-400">{formatDateTime(movement.createdAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <ConfirmDialog
+        open={Boolean(productToDelete)}
+        title="Delete product?"
+        description="This will permanently remove the inventory item from the system."
+        icon={<Trash2 className="h-5 w-5 text-rose-200" />}
+        confirmText="Delete product"
+        confirmLoading={pendingDelete}
+        destructive
+        onCancel={() => setProductToDelete(null)}
+        onConfirm={() => {
+          if (productToDelete) handleDelete(productToDelete);
+        }}
+      />
     </PageTransition>
   );
 }

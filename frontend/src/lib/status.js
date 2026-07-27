@@ -31,7 +31,9 @@ export const TASK_STATUS_META = Object.freeze({
 export const LOG_SEVERITY_META = Object.freeze({
   INFO: { label: "Info", tone: "primary" },
   WARN: { label: "Warn", tone: "warning" },
-  ERROR: { label: "Error", tone: "error" }
+  WARNING: { label: "Warning", tone: "warning" },
+  ERROR: { label: "Error", tone: "error" },
+  SUCCESS: { label: "Success", tone: "success" }
 });
 
 export function getRobotStateMeta(state) {

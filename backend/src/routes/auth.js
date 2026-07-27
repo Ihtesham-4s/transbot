@@ -4,6 +4,7 @@ import { z } from "zod";
 import { signToken } from "../utils/jwt.js";
 import { User } from "../models/User.js";
 import { createRateLimiter } from "../middleware/rateLimitMiddleware.js";
+import { logEvent } from "../utils/logger.js";
 
 const router = express.Router();
 
@@ -22,7 +23,8 @@ const loginLimiter = createRateLimiter({
 const registerSchema = z.object({
   name: z.string().min(1).max(100),
   email: z.string().email().max(100),
-  password: z.string().min(6).max(255)
+  password: z.string().min(6).max(255),
+  role: z.enum(["manager", "operator"]).optional()
 });
 
 const loginSchema = z.object({
@@ -36,7 +38,8 @@ router.post("/register", registerLimiter, async (req, res) => {
     return res.status(400).json({ message: "Invalid input.", errors: parsed.error.flatten() });
   }
 
-  const { name, email, password } = parsed.data;
+  const { name, email, password, role } = parsed.data;
+  const selectedRole = role ?? "operator";
 
   try {
     const existing = await User.findOne({ email }).select("_id");
@@ -45,13 +48,24 @@ router.post("/register", registerLimiter, async (req, res) => {
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const created = await User.create({ name, email, passwordHash, role: "user" });
+    const created = await User.create({ name, email, passwordHash, role: selectedRole });
 
     const token = signToken({
       id: String(created._id),
-      role: created.role,
+      role: selectedRole,
       email: created.email,
       name: created.name
+    });
+
+    await logEvent({
+      eventType: "USER_REGISTERED",
+      module: "AUTH",
+      severity: "SUCCESS",
+      message: `User registered: ${created.email}.`,
+      entityType: "User",
+      entityId: created._id,
+      actorId: created._id,
+      metadata: { email: created.email, role: selectedRole }
     });
 
     return res.status(201).json({
@@ -60,7 +74,7 @@ router.post("/register", registerLimiter, async (req, res) => {
         id: String(created._id),
         name: created.name,
         email: created.email,
-        role: created.role,
+        role: selectedRole,
         created_at: created.createdAt
       }
     });
@@ -92,15 +106,29 @@ router.post("/login", loginLimiter, async (req, res) => {
       return res.status(401).json({ message: "Invalid email or password." });
     }
 
+    const role = found.role === "manager" || found.role === "operator" ? found.role : "operator";
+
     const user = {
       id: String(found._id),
       name: found.name,
       email: found.email,
-      role: found.role,
+      role,
       created_at: found.createdAt
     };
 
     const token = signToken({ id: user.id, role: user.role, email: user.email, name: user.name });
+
+    await logEvent({
+      eventType: "USER_LOGIN",
+      module: "AUTH",
+      severity: "SUCCESS",
+      message: `User logged in: ${user.email}.`,
+      entityType: "User",
+      entityId: user.id,
+      actorId: user.id,
+      metadata: { email: user.email, role: user.role }
+    });
+
     return res.json({ token, user });
   } catch {
     return res.status(500).json({ message: "Server error." });
@@ -108,4 +136,3 @@ router.post("/login", loginLimiter, async (req, res) => {
 });
 
 export default router;
-

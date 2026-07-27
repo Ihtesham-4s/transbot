@@ -20,10 +20,22 @@ export default function Login() {
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
+
+    const normalizedEmail = email.trim();
+    const normalizedPassword = password;
+    if (!normalizedEmail) {
+      setError("Email is required.");
+      return;
+    }
+    if (!normalizedPassword) {
+      setError("Password is required.");
+      return;
+    }
+
     setSubmitting(true);
 
     try {
-      const response = await loginUser({ email, password });
+      const response = await loginUser({ email: normalizedEmail, password: normalizedPassword });
       setAuth({ token: response.token, user: response.user });
       navigate("/dashboard", { replace: true });
     } catch (submitError) {

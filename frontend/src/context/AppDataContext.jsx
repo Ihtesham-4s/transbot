@@ -116,11 +116,6 @@ export function AppDataProvider({ children }) {
     }
 
     refreshData();
-    const intervalId = window.setInterval(() => {
-      refreshData({ silent: true });
-    }, 5000);
-
-    return () => window.clearInterval(intervalId);
   }, [token, refreshData]);
 
   const runAction = useCallback(async (key, action, successMessage) => {

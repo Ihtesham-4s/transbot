@@ -6,14 +6,14 @@
   --page-bg-start: #0f172a;
   --page-bg-mid: #1e1b4b;
   --page-bg-end: #0f172a;
-  --card-border: rgba(255, 255, 255, 0.1);
-  --card-border-strong: rgba(255, 255, 255, 0.16);
+  --card-border: rgba(148, 163, 184, 0.16);
+  --card-border-strong: rgba(148, 163, 184, 0.28);
   --card-bg:
     linear-gradient(
-      145deg,
-      rgba(15, 23, 42, 0.88) 0%,
-      rgba(30, 41, 59, 0.76) 48%,
-      rgba(15, 23, 42, 0.84) 100%
+      180deg,
+      rgba(15, 23, 42, 0.94) 0%,
+      rgba(15, 23, 42, 0.88) 56%,
+      rgba(30, 41, 59, 0.82) 100%
     );
   --text-primary: #ffffff;
   --text-secondary: #cbd5e1;
@@ -70,8 +70,8 @@ a {
   background: var(--card-bg);
   backdrop-filter: blur(22px);
   box-shadow:
-    0 24px 80px rgba(2, 6, 23, 0.45),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    0 20px 54px rgba(2, 6, 23, 0.36),
+    0 1px 0 rgba(255, 255, 255, 0.03) inset;
   transition:
     transform 260ms ease,
     border-color 260ms ease,
@@ -84,8 +84,8 @@ a {
   inset: 0;
   border-radius: inherit;
   background:
-    radial-gradient(circle at top left, rgba(96, 165, 250, 0.18), transparent 34%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 34%, rgba(6, 182, 212, 0.08) 100%);
+    radial-gradient(circle at top left, rgba(96, 165, 250, 0.12), transparent 34%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.05), transparent 36%, rgba(6, 182, 212, 0.04) 100%);
   pointer-events: none;
 }
 
@@ -106,8 +106,8 @@ a {
   transform: translateY(-2px);
   border-color: var(--card-border-strong);
   box-shadow:
-    0 28px 90px rgba(2, 6, 23, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    0 26px 68px rgba(2, 6, 23, 0.44),
+    0 1px 0 rgba(255, 255, 255, 0.06) inset;
 }
 
 .surface-card:hover::after {
@@ -116,17 +116,19 @@ a {
 }
 
 .surface-card-muted {
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 1.25rem;
   background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.03)),
-    rgba(15, 23, 42, 0.52);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.025)),
+    rgba(15, 23, 42, 0.6);
   backdrop-filter: blur(18px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 12px 30px rgba(2, 6, 23, 0.2);
 }
 
 .surface-divider {
-  border-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(148, 163, 184, 0.16);
 }
 
 .brand-heading {
@@ -191,6 +193,24 @@ a {
 
 .animate-float-particle {
   animation: float-particle linear infinite;
+}
+
+.warehouse-route-active {
+  stroke-dasharray: 12 10;
+  animation: warehouse-route-flow 1.15s linear infinite;
+}
+
+.warehouse-zone-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: warehouse-zone-pulse 1.8s ease-in-out infinite;
+}
+
+.warehouse-robot {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition-property: transform;
+  transition-timing-function: linear;
 }
 
 .thin-scrollbar {
@@ -347,5 +367,24 @@ input:-webkit-autofill:focus {
   100% {
     transform: translate3d(40px, -100vh, 0);
     opacity: 0;
+  }
+}
+
+@keyframes warehouse-route-flow {
+  to {
+    stroke-dashoffset: -44;
+  }
+}
+
+@keyframes warehouse-zone-pulse {
+  0%,
+  100% {
+    opacity: 0.48;
+    transform: scale(0.94);
+  }
+
+  50% {
+    opacity: 0.9;
+    transform: scale(1.12);
   }
 }

@@ -1,17 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+
+const particles = Array.from({ length: 18 }, (_, index) => {
+  const seed = index + 1;
+  return {
+    left: `${(seed * 37) % 100}%`,
+    top: `${(seed * 53) % 100}%`,
+    delay: `${(seed % 5) * 0.8}s`,
+    duration: `${8 + (seed % 7)}s`
+  };
+});
 
 export function AuthShell({ children }) {
   const [mousePosition, setMousePosition] = useState({ x: 50, y: 50 });
-  const particles = useMemo(
-    () =>
-      Array.from({ length: 18 }, () => ({
-        left: `${Math.random() * 100}%`,
-        top: `${Math.random() * 100}%`,
-        delay: `${Math.random() * 4}s`,
-        duration: `${8 + Math.random() * 8}s`
-      })),
-    []
-  );
 
   useEffect(() => {
     const handleMouseMove = (event) => {

@@ -14,7 +14,12 @@ const taskSchema = new mongoose.Schema(
   {
     pickup_zone_id: { type: mongoose.Schema.Types.ObjectId, ref: "Zone", required: true },
     drop_zone_id: { type: mongoose.Schema.Types.ObjectId, ref: "Zone", required: true },
+    order_id: { type: mongoose.Schema.Types.ObjectId, ref: "Order", default: null },
     weight: { type: Number, required: true, min: 0 },
+    totalWeightKg: { type: Number, default: 0, min: 0 },
+    assignedType: { type: String, enum: ["ROBOT", "MANUAL"], default: null },
+    verificationType: { type: String, enum: ["VERIFIED", "MANUAL_CONFIRMED"], default: null },
+    assignedWorkerName: { type: String, trim: true, maxlength: 120, default: null },
     priority: {
       type: String,
       enum: TASK_PRIORITIES,
@@ -71,6 +76,9 @@ taskSchema.set("toJSON", {
       ret.assigned_robot_id = ret.assigned_robot_id.id
         ? String(ret.assigned_robot_id.id)
         : String(ret.assigned_robot_id);
+    }
+    if (ret.order_id) {
+      ret.order_id = ret.order_id.id ? String(ret.order_id.id) : String(ret.order_id);
     }
     if (ret.pickup_zone_id) {
       ret.pickup_zone_id = ret.pickup_zone_id.id

@@ -2,9 +2,10 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
-import Inventory from "./pages/Inventory";
-import Fulfillment from "./pages/Fulfillment";
 import Tasks from "./pages/Tasks";
+import Inventory from "./pages/Inventory";
+import Orders from "./pages/Orders";
+import PickLists from "./pages/PickLists";
 import RobotControl from "./pages/RobotControl";
 import Logs from "./pages/Logs";
 import NotFound from "./pages/NotFound";
@@ -25,9 +26,13 @@ export default function App() {
 
         <Route element={<AppLayout />}>
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/inventory" element={<Inventory />} />
-          <Route path="/fulfillment" element={<Fulfillment />} />
           <Route path="/tasks" element={<Tasks />} />
+          <Route path="/inventory" element={<Inventory />} />
+          <Route path="/orders" element={<Orders />} />
+          <Route path="/picklists" element={<PickLists />} />
+          <Route path="/planner" element={<Navigate to="/tasks" replace />} />
+          <Route path="/path-planner" element={<Navigate to="/tasks" replace />} />
+          <Route path="/simulation" element={<Navigate to="/tasks" replace />} />
           <Route path="/robot" element={<RobotControl />} />
           <Route path="/logs" element={<Logs />} />
         </Route>

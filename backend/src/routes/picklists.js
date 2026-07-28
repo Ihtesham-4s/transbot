@@ -33,7 +33,7 @@ function serializePickList(pickList) {
   return pickList?.toJSON ? pickList.toJSON() : pickList;
 }
 
-router.post("/from-order/:orderId", requireRole(["manager"]), async (req, res) => {
+router.post("/from-order/:orderId", requireRole(["manager", "operator"]), async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId);
     if (!order) return res.status(404).json({ message: "Order not found." });
@@ -79,8 +79,9 @@ router.post("/from-order/:orderId", requireRole(["manager"]), async (req, res) =
     });
 
     return res.status(201).json({ picklist: serializePickList(created) });
-  } catch {
-    return res.status(500).json({ message: "Server error." });
+  } catch (err) {
+    console.error("[picklists] from-order error:", err);
+    return res.status(500).json({ message: err?.message || "Server error generating pick list." });
   }
 });
 
@@ -202,8 +203,9 @@ router.patch("/:id/complete", async (req, res) => {
     await autoAssignTask({ trigger: "PICKLIST_COMPLETED", userId: req.user?.id });
 
     return res.json({ picklist: serializePickList(picklist), task: createdTask.toJSON() });
-  } catch {
-    return res.status(500).json({ message: "Server error." });
+  } catch (err) {
+    console.error("[picklists] complete error:", err);
+    return res.status(500).json({ message: err?.message || "Server error completing pick list." });
   }
 });
 

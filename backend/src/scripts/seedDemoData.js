@@ -12,30 +12,23 @@ import { logEvent } from "../utils/logger.js";
 const DEMO_USER_EMAIL = "demo.manager@transbot.local";
 const DEMO_PASSWORD = "password123";
 
-const zones = [
-  { code: "ZONE_CHARGE", label: "Charging Dock", type: "CHARGING" },
-  { code: "ZONE_A", label: "Receiving Area", type: "PICKUP" },
-  { code: "ZONE_B", label: "Rack A1", type: "PICKUP" },
-  { code: "ZONE_C", label: "Rack B2", type: "DROPOFF" },
-  { code: "ZONE_D", label: "Shipping Area", type: "DROPOFF" }
+// 3-zone L-shaped track: A (south/home), B (north), C (west of B)
+const ZONES = [
+  { code: "A", name: "Zone A", label: "Zone A", type: "PICKUP",  description: "South \u2014 robot home position (start of vertical aisle).", isHome: true  },
+  { code: "B", name: "Zone B", label: "Zone B", type: "PICKUP",  description: "North \u2014 top of vertical aisle.",                              isHome: false },
+  { code: "C", name: "Zone C", label: "Zone C", type: "DROPOFF", description: "West of B \u2014 end of horizontal aisle.",                        isHome: false }
 ];
 
 async function ensureUser() {
   let user = await User.findOne({ email: DEMO_USER_EMAIL });
-  if (user) {
-    if (user.role !== "admin") {
-      user.role = "admin";
-      await user.save();
-    }
-    return user;
-  }
+  if (user) return user;
 
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
   user = await User.create({
     name: "Demo Manager",
     email: DEMO_USER_EMAIL,
     passwordHash,
-    role: "admin"
+    role: "manager"     // valid roles: "manager" | "operator"
   });
 
   await logEvent({
@@ -53,7 +46,7 @@ async function ensureUser() {
 }
 
 async function ensureZones() {
-  for (const zone of zones) {
+  for (const zone of ZONES) {
     await Zone.findOneAndUpdate(
       { code: zone.code },
       { $set: { ...zone, active: true } },
@@ -62,26 +55,28 @@ async function ensureZones() {
   }
 }
 
-async function ensureRobot(user) {
-  const chargeZone = await Zone.findOne({ code: "ZONE_CHARGE" });
+async function ensureRobot() {
   let robot = await Robot.findOne({}).sort({ createdAt: 1 });
   if (robot) return robot;
 
+  const zoneA = await Zone.findOne({ code: "A" });
+
   robot = await Robot.create({
-    name: "Robot-Prototype-01",
+    name: "Robot-01",
     currentState: "IDLE",
-    autoMode: false,
-    location_zone_id: chargeZone?._id
+    autoMode: true,
+    maxCapacityKg: 2,
+    location_zone_id: zoneA?._id
   });
 
   await logEvent({
     eventType: "ROBOT_STATE_UPDATED",
     module: "ROBOT",
     severity: "INFO",
-    message: "Demo robot prototype initialized in IDLE state.",
+    message: "Demo robot initialized in IDLE state at Zone A.",
     entityType: "Robot",
     entityId: robot._id,
-    actorId: user._id,
+    actorId: null,
     robot_id: robot._id,
     metadata: { seeded: true }
   });
@@ -89,80 +84,60 @@ async function ensureRobot(user) {
   return robot;
 }
 
-async function seedTasks(user) {
+async function seedTasks() {
   if ((await Task.countDocuments({})) > 0) return;
 
-  const [zoneA, zoneB, zoneC, zoneD] = await Promise.all([
-    Zone.findOne({ code: "ZONE_A" }),
-    Zone.findOne({ code: "ZONE_B" }),
-    Zone.findOne({ code: "ZONE_C" }),
-    Zone.findOne({ code: "ZONE_D" })
+  const [zoneA, zoneB, zoneC] = await Promise.all([
+    Zone.findOne({ code: "A" }),
+    Zone.findOne({ code: "B" }),
+    Zone.findOne({ code: "C" })
   ]);
 
-  const tasks = await Task.insertMany([
-    {
-      pickup_zone_id: zoneA._id,
-      drop_zone_id: zoneC._id,
-      weight: 2.4,
-      priority: "HIGH",
-      status: "PENDING"
-    },
-    {
-      pickup_zone_id: zoneB._id,
-      drop_zone_id: zoneD._id,
-      weight: 1.2,
-      priority: "MEDIUM",
-      status: "PENDING"
-    },
-    {
-      pickup_zone_id: zoneA._id,
-      drop_zone_id: zoneD._id,
-      weight: 4.8,
-      priority: "URGENT",
-      status: "PENDING"
-    }
+  if (!zoneA || !zoneB || !zoneC) {
+    console.warn("[seed] Zones not found \u2014 skipping task seed.");
+    return;
+  }
+
+  // All task weights must be <= 2 kg (robot payload limit)
+  await Task.insertMany([
+    { pickup_zone_id: zoneA._id, drop_zone_id: zoneB._id, weight: 1.2, priority: "HIGH",   status: "PENDING" },
+    { pickup_zone_id: zoneA._id, drop_zone_id: zoneC._id, weight: 0.8, priority: "MEDIUM", status: "PENDING" },
+    { pickup_zone_id: zoneA._id, drop_zone_id: zoneB._id, weight: 1.9, priority: "URGENT", status: "PENDING" }
   ]);
 
   await logEvent({
     eventType: "TASK_BULK_CREATED",
     module: "TASK",
     severity: "SUCCESS",
-    message: "Demo robot tasks seeded.",
-    actorId: user._id,
-    metadata: { seeded: true, taskCount: tasks.length }
+    message: "Demo tasks seeded (3 tasks from Zone A).",
+    actorId: null,
+    metadata: { seeded: true, taskCount: 3 }
   });
 }
 
-async function seedAuditLogs(user) {
+async function seedAuditLogs() {
   const count = await Log.countDocuments({});
   if (count >= 6) return;
 
   const events = [
-    ["TASK_CREATED", "TASK", "SUCCESS", "Demo task created for receiving to packing."],
-    ["AUTO_TASK_ASSIGNMENT_SKIPPED", "TASK", "INFO", "Auto assignment skipped while robot auto mode is off."],
-    ["ROBOT_RESET", "ROBOT", "WARNING", "Demo robot reset event for audit visibility."],
-    ["SYSTEM_HEALTH_CHECK", "SYSTEM", "INFO", "Demo system health check completed."]
+    ["TASK_CREATED",                 "TASK",   "SUCCESS", "Demo task created: Zone A \u2192 Zone B."],
+    ["AUTO_TASK_ASSIGNED",           "TASK",   "SUCCESS", "Auto assignment: Robot-01 picked up task from Zone A."],
+    ["ROBOT_RESET",                  "ROBOT",  "WARNING", "Demo robot reset event for audit visibility."],
+    ["SYSTEM_HEALTH_CHECK",          "SYSTEM", "INFO",    "Demo system health check completed."]
   ];
 
   for (const [eventType, module, severity, message] of events) {
-    await logEvent({
-      eventType,
-      module,
-      severity,
-      message,
-      actorId: user._id,
-      metadata: { seeded: true }
-    });
+    await logEvent({ eventType, module, severity, message, actorId: null, metadata: { seeded: true } });
   }
 }
 
 async function seed() {
   await connectDb();
   await ensureZones();
-  const user = await ensureUser();
-  await ensureRobot(user);
-  await seedTasks(user);
-  await seedAuditLogs(user);
+  await ensureUser();
+  await ensureRobot();
+  await seedTasks();
+  await seedAuditLogs();
 
   console.log("Demo seed complete.");
   console.log(`Demo login: ${DEMO_USER_EMAIL} / ${DEMO_PASSWORD}`);

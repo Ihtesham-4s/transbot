@@ -96,6 +96,40 @@ export default function Orders() {
     [picklists]
   );
 
+  const selectedProductIds = useMemo(
+    () => new Set(items.map((item) => item.product_id).filter(Boolean)),
+    [items]
+  );
+
+  const usedProductZoneCodes = useMemo(() => {
+    const codes = new Set();
+    products.forEach((product) => {
+      const id = getProductId(product);
+      if (selectedProductIds.has(id)) {
+        const zoneCode = product.zone_code || product.zone_id?.code;
+        if (zoneCode) codes.add(String(zoneCode));
+      }
+    });
+    return codes;
+  }, [products, selectedProductIds]);
+
+  const availableDeliveryZones = useMemo(() => {
+    return zones.filter((zone) => !usedProductZoneCodes.has(zone.code));
+  }, [zones, usedProductZoneCodes]);
+
+  useEffect(() => {
+    if (availableDeliveryZones.length > 0) {
+      const isCurrentValid = availableDeliveryZones.some(
+        (z) => z.id === deliverZoneId || z._id === deliverZoneId
+      );
+      if (!isCurrentValid) {
+        setDeliverZoneId(availableDeliveryZones[0].id || availableDeliveryZones[0]._id || "");
+      }
+    } else {
+      setDeliverZoneId("");
+    }
+  }, [availableDeliveryZones, deliverZoneId]);
+
   const loadOrders = useCallback(async () => {
     if (!token) {
       setOrders([]);
@@ -395,13 +429,18 @@ export default function Orders() {
               <div className="grid gap-2">
                 <label className="text-sm font-medium text-slate-300">Delivery Zone</label>
                 <Select value={deliverZoneId} onChange={(event) => setDeliverZoneId(event.target.value)} required>
-                  <option value="">Select delivery zone</option>
-                  {zones.map((zone) => (
+                  {!deliverZoneId ? <option value="">Select delivery zone</option> : null}
+                  {availableDeliveryZones.map((zone) => (
                     <option key={zone.id} value={zone.id}>
                       {zone.label || zone.code}
                     </option>
                   ))}
                 </Select>
+                {usedProductZoneCodes.size > 0 ? (
+                  <p className="text-xs text-slate-400">
+                    Excluded item location zone(s): <span className="font-semibold text-amber-300">Zone {Array.from(usedProductZoneCodes).join(", Zone ")}</span> (delivery zone must differ from item location).
+                  </p>
+                ) : null}
               </div>
 
               {items.map((item, index) => (

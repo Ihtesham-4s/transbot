@@ -9,17 +9,17 @@ export function Card({ className, children, ...props }) {
 }
 
 export function CardHeader({ className, ...props }) {
-  return <div className={cn("relative z-10 border-b surface-divider px-6 py-6", className)} {...props} />;
+  return <div className={cn("relative z-10 border-b border-white/[0.08] px-6 py-5", className)} {...props} />;
 }
 
 export function CardTitle({ className, ...props }) {
-  return <h2 className={cn("brand-heading text-lg font-semibold text-white", className)} {...props} />;
+  return <h2 className={cn("brand-heading text-lg font-bold tracking-tight text-white flex items-center gap-2", className)} {...props} />;
 }
 
 export function CardDescription({ className, ...props }) {
-  return <p className={cn("mt-1.5 text-sm leading-6 text-slate-300", className)} {...props} />;
+  return <p className={cn("mt-1 text-xs leading-5 text-slate-400 font-normal", className)} {...props} />;
 }
 
 export function CardContent({ className, ...props }) {
-  return <div className={cn("relative z-10 px-6 py-6", className)} {...props} />;
+  return <div className={cn("relative z-10 px-6 py-5", className)} {...props} />;
 }

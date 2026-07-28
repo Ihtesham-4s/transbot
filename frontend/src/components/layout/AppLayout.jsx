@@ -9,7 +9,9 @@ import {
   LogOut,
   Menu,
   Package,
+  Settings,
   ShoppingCart,
+  Sparkles,
   X,
 } from "lucide-react";
 import { AppDataProvider } from "../../context/AppDataContext";
@@ -19,12 +21,14 @@ import { cn } from "../../lib/cn";
 
 const navItems = [
   { label: "Dashboard", to: "/dashboard", icon: House },
-  { label: "Tasks", to: "/tasks", icon: FileText },
+  { label: "AI Copilot", to: "/copilot", icon: Sparkles },
   { label: "Inventory", to: "/inventory", icon: Package },
   { label: "Orders", to: "/orders", icon: ShoppingCart },
   { label: "Pick Lists", to: "/picklists", icon: ClipboardList },
+  { label: "Tasks", to: "/tasks", icon: FileText },
   { label: "Robot Prototype", to: "/robot", icon: Cpu },
-  { label: "Logs", to: "/logs", icon: FileText }
+  { label: "Logs", to: "/logs", icon: FileText },
+  { label: "Settings", to: "/settings", icon: Settings }
 ];
 
 function SidebarContent({ onNavigate }) {

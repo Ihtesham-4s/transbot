@@ -49,6 +49,24 @@ export function getMe(token) {
   return apiFetch("/api/users/me", { method: "GET", token });
 }
 
+/** PATCH /api/users/me — update profile (name and/or email) */
+export function updateProfile(token, payload) {
+  return apiFetch("/api/users/me", {
+    method: "PATCH",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+/** PATCH /api/users/me/password — change password */
+export function updatePassword(token, payload) {
+  return apiFetch("/api/users/me/password", {
+    method: "PATCH",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
 export function getSystemStats(token) {
   return apiFetch("/api/system/stats", { method: "GET", token });
 }
@@ -107,10 +125,47 @@ export function sendRobotCommand(token, command) {
 }
 
 export function logRobotZoneArrival(token, zoneCode) {
+  // zoneCode must be one of: "A", "B", "C"
   return apiFetch("/api/robot/zone-arrival", {
     method: "POST",
     token,
     body: JSON.stringify({ zoneCode })
+  });
+}
+
+/** POST /api/robot/mode — switch between AUTO and MANUAL mode */
+export function setRobotMode(token, mode) {
+  return apiFetch("/api/robot/mode", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ mode })
+  });
+}
+
+/** POST /api/robot/nudge — NUDGE:L or NUDGE:R (hidden keypress, AUTO mode only) */
+export function sendNudge(token, direction) {
+  return apiFetch("/api/robot/nudge", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ direction })
+  });
+}
+
+/** POST /api/robot/task-command — TASK:AB|AC|BA|BC|CA|CB (AUTO mode only) */
+export function sendTaskCommand(token, task) {
+  return apiFetch("/api/robot/task-command", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ task })
+  });
+}
+
+/** POST /api/robot/speed — SPEED:<right>,<left> (MANUAL mode only) */
+export function setMotorSpeed(token, right, left) {
+  return apiFetch("/api/robot/speed", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ right, left })
   });
 }
 
@@ -137,14 +192,6 @@ export function setRobotAutoMode(token, autoMode) {
 // Tasks
 export function createTask(token, payload) {
   return apiFetch(`/api/tasks`, {
-    method: "POST",
-    token,
-    body: JSON.stringify(payload)
-  });
-}
-
-export function createTasksBulk(token, payload) {
-  return apiFetch(`/api/tasks/bulk`, {
     method: "POST",
     token,
     body: JSON.stringify(payload)

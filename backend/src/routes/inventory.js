@@ -5,6 +5,7 @@ import { authMiddleware } from "../middleware/authMiddleware.js";
 import { requireRole } from "../middleware/requireRole.js";
 import { Product } from "../models/Product.js";
 import { Zone } from "../models/Zone.js";
+import { mongoose } from "../db.js";
 import { logEvent } from "../utils/logger.js";
 
 const router = express.Router();
@@ -91,20 +92,32 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-router.post("/", requireRole(["manager"]), async (req, res) => {
+router.post("/", requireRole(["manager", "operator"]), async (req, res) => {
   const parsed = createProductSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ message: "Invalid input.", errors: parsed.error.flatten() });
   }
 
   try {
-    const zone = await Zone.findById(parsed.data.zone_id);
+    const skuUpper = parsed.data.sku.toUpperCase();
+    const duplicateSku = await Product.findOne({ sku: skuUpper });
+    if (duplicateSku) {
+      return res.status(400).json({ message: `Product with SKU "${skuUpper}" already exists.` });
+    }
+
+    let zone = null;
+    if (mongoose.Types.ObjectId.isValid(parsed.data.zone_id)) {
+      zone = await Zone.findById(parsed.data.zone_id);
+    }
     if (!zone) {
-      return res.status(400).json({ message: "Unknown zone id." });
+      zone = await Zone.findOne({ code: String(parsed.data.zone_id).toUpperCase() });
+    }
+    if (!zone) {
+      return res.status(400).json({ message: "Unknown zone specified." });
     }
 
     const created = await Product.create({
-      sku: parsed.data.sku.toUpperCase(),
+      sku: skuUpper,
       name: parsed.data.name,
       category: parsed.data.category ?? null,
       weightKg: parsed.data.weightKg,
@@ -129,8 +142,9 @@ router.post("/", requireRole(["manager"]), async (req, res) => {
     });
 
     return res.status(201).json({ product: serializeProduct(created) });
-  } catch {
-    return res.status(500).json({ message: "Server error." });
+  } catch (err) {
+    console.error("[inventory] create product error:", err);
+    return res.status(500).json({ message: err?.message || "Server error creating product." });
   }
 });
 

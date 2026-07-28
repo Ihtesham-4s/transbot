@@ -8,6 +8,8 @@ import Orders from "./pages/Orders";
 import PickLists from "./pages/PickLists";
 import RobotControl from "./pages/RobotControl";
 import Logs from "./pages/Logs";
+import Settings from "./pages/Settings";
+import Copilot from "./pages/Copilot";
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import AppRedirect from "./pages/AppRedirect";
@@ -30,11 +32,13 @@ export default function App() {
           <Route path="/inventory" element={<Inventory />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/picklists" element={<PickLists />} />
+          <Route path="/copilot" element={<Copilot />} />
           <Route path="/planner" element={<Navigate to="/tasks" replace />} />
           <Route path="/path-planner" element={<Navigate to="/tasks" replace />} />
           <Route path="/simulation" element={<Navigate to="/tasks" replace />} />
           <Route path="/robot" element={<RobotControl />} />
           <Route path="/logs" element={<Logs />} />
+          <Route path="/settings" element={<Settings />} />
         </Route>
       </Route>
 

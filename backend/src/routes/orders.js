@@ -103,6 +103,20 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ message: "Unknown delivery zone." });
     }
 
+    // Delivery zone cannot match any item's pickup zone
+    const productIds = parsed.data.items.map((i) => i.product_id);
+    const products = await Product.find({ _id: { $in: productIds } }).populate("zone_id");
+
+    for (const product of products) {
+      const productZoneId = product.zone_id?._id?.toString() || product.zone_id?.toString();
+      const productZoneCode = product.zone_id?.code || "unknown";
+      if (productZoneId && productZoneId === deliverZone._id.toString()) {
+        return res.status(400).json({
+          message: `Delivery zone (Zone ${deliverZone.code}) cannot be the same as item location (Zone ${productZoneCode} for product "${product.name}").`
+        });
+      }
+    }
+
     const stockCheck = await checkStockAvailability(parsed.data.items);
     if (stockCheck.missingProductIds.length > 0) {
       return res.status(400).json({

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Copy, ListFilter, PackagePlus, RefreshCw, Trash2 } from "lucide-react";
+import { CheckCircle2, Copy, ListFilter, PackagePlus, RefreshCw, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -33,37 +33,40 @@ export default function Tasks() {
   const toast = useToast();
   const { token } = useAuth();
   const {
-    pickupZones,
-    dropZones,
+    zones,
     tasks,
+    robot,
     initialLoading,
     refreshing,
     pendingActions,
     refreshData,
     createTaskAction,
-    createBulkTasksAction,
     assignTaskAction,
     completeTaskAction,
     deleteTaskAction,
     lastUpdated
   } = useAppData();
 
-  const [taskMode, setTaskMode] = useState("single");
-  const [pickupZone, setPickupZone] = useState("");
+  // Pickup zone is locked to the robot's current zone
+  const robotZoneCode = robot?.location || null;
+  const robotZoneLabel = robotZoneCode ? `Zone ${robotZoneCode}` : "Unknown";
+
+  // Drop zone: user-selected, must differ from pickup zone
   const [dropZone, setDropZone] = useState("");
   const [weight, setWeight] = useState("1");
-  const [priority, setPriority] = useState("MEDIUM");
-  const [bulkText, setBulkText] = useState("");
+  const [weightError, setWeightError] = useState("");
   const [taskToDelete, setTaskToDelete] = useState(null);
   const [page, setPage] = useState(1);
   const [queueOpen, setQueueOpen] = useState(true);
   const [queueTasks, setQueueTasks] = useState([]);
   const [queueLoading, setQueueLoading] = useState(true);
   const [queueRefreshing, setQueueRefreshing] = useState(false);
+  const [clearingQueue, setClearingQueue] = useState(false);
 
-  const selectedPickupZone = pickupZone || pickupZones[0]?.code || "";
-  const selectedDropZone = dropZone || dropZones[0]?.code || "";
-  const canCreateTask = Boolean(selectedPickupZone && selectedDropZone && weight);
+  // All zones except the robot's current zone are valid drop targets
+  const availableDropZones = zones.filter((z) => z.code !== robotZoneCode);
+  const selectedDropZone = dropZone || availableDropZones[0]?.code || "";
+  const canCreateTask = Boolean(robotZoneCode && selectedDropZone && weight && !weightError);
 
   const sortedTasks = [...tasks].sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
   const totalPages = Math.max(1, Math.ceil(sortedTasks.length / PAGE_SIZE));
@@ -99,45 +102,50 @@ export default function Tasks() {
     await Promise.allSettled([refreshData(), loadTaskQueue({ silent: true })]);
   }
 
+  async function handleClearQueue() {
+    if (!token) return;
+    setClearingQueue(true);
+    try {
+      await apiFetch("/api/tasks/queue/clear", { method: "DELETE", token });
+      toast.success("Task queue cleared.");
+      await handleRefreshAll();
+    } catch (clearErr) {
+      toast.error(getErrorMessage(clearErr, "Failed to clear queue."));
+    } finally {
+      setClearingQueue(false);
+    }
+  }
+
   async function handleCreateTask(event) {
     event.preventDefault();
 
     const parsedWeight = Number(weight);
     if (!Number.isFinite(parsedWeight) || parsedWeight <= 0) {
-      toast.error("Weight must be greater than 0.");
+      setWeightError("Weight must be greater than 0.");
       return;
     }
-    if (parsedWeight > 10) {
-      toast.error("Weight cannot exceed 10kg.");
+    if (parsedWeight > 2) {
+      setWeightError("Weight cannot exceed 2 kg — robot payload limit is 2 kg.");
       return;
     }
-    if (selectedPickupZone === selectedDropZone) {
+
+    if (!robotZoneCode) {
+      toast.error("Cannot determine robot's current zone. Refresh the page.");
+      return;
+    }
+    if (robotZoneCode === selectedDropZone) {
       toast.error("Pickup and drop zones must be different.");
       return;
     }
 
+    setWeightError("");
     await createTaskAction({
-      pickup_zone: selectedPickupZone,
+      pickup_zone: robotZoneCode,
       drop_zone: selectedDropZone,
-      weight: parsedWeight,
-      priority: priority
+      weight: parsedWeight
     });
     setWeight("1");
-    setPriority("MEDIUM");
-  }
-
-  async function handleCreateBulkTasks(event) {
-    event.preventDefault();
-    const result = await createBulkTasksAction({ text: bulkText });
-
-    if (result?.created > 0) {
-      toast.success(`Created ${result.created} task(s). Failed: ${result.failed || 0}.`);
-    } else {
-      const firstError = result?.errors?.[0]?.reason || "No tasks were created.";
-      toast.error(`Bulk create failed: ${firstError}`);
-    }
-
-    setBulkText("");
+    setDropZone("");
   }
 
   async function handleCopyTaskId(taskId) {
@@ -153,7 +161,7 @@ export default function Tasks() {
     <PageTransition>
       <PageHeader
         title="Tasks"
-        description="Create delivery jobs, monitor their progress, and manage the queue from one place."
+        description="Use this as a manual backup flow when a task needs to be created outside the pick list process."
         lastUpdated={lastUpdated}
         actions={
           <Button variant="secondary" onClick={handleRefreshAll} isLoading={refreshing || queueRefreshing}>
@@ -183,123 +191,79 @@ export default function Tasks() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <PackagePlus className="h-5 w-5 text-cyan-300" />
-            Create Tasks
+            Create Emergency Task
           </CardTitle>
-          <CardDescription>Use single mode for one task or bulk mode for many tasks at once.</CardDescription>
+          <CardDescription>
+            Manual fallback for cases where a task must be created outside the approved pick list flow.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="mb-4 flex items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant={taskMode === "single" ? "primary" : "secondary"}
-              onClick={() => setTaskMode("single")}
-            >
-              Single Task
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={taskMode === "bulk" ? "primary" : "secondary"}
-              onClick={() => setTaskMode("bulk")}
-            >
-              Bulk Tasks
-            </Button>
-          </div>
+          <form className="grid gap-4 xl:grid-cols-[1fr_1fr_160px_auto]" onSubmit={handleCreateTask}>
+            {/* Pickup zone — locked to robot's current location */}
+            <div className="grid gap-2">
+              <label className="text-sm font-medium text-slate-300">Pickup Zone</label>
+              <div className="flex items-center rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white">
+                {robotZoneCode ? (
+                  <span className="font-medium">{robotZoneLabel}</span>
+                ) : (
+                  <span className="text-slate-500">Robot zone unknown — refresh</span>
+                )}
+                <span className="ml-2 text-xs text-slate-500">(robot location)</span>
+              </div>
+            </div>
 
-          {taskMode === "single" ? (
-            <form className="grid gap-4 xl:grid-cols-[1fr_1fr_140px_120px_auto]" onSubmit={handleCreateTask}>
-              <div className="grid gap-2">
-                <label className="text-sm font-medium text-slate-300">Pickup Zone</label>
-                <Select
-                  value={selectedPickupZone}
-                  onChange={(event) => setPickupZone(event.target.value)}
-                  required
-                >
-                  {!selectedPickupZone ? <option value="">Select pickup zone</option> : null}
-                  {pickupZones.map((zone) => (
-                    <option key={zone.id} value={zone.code}>
-                      {zone.label}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <label className="text-sm font-medium text-slate-300">Drop Zone</label>
-                <Select
-                  value={selectedDropZone}
-                  onChange={(event) => setDropZone(event.target.value)}
-                  required
-                >
-                  {!selectedDropZone ? <option value="">Select drop zone</option> : null}
-                  {dropZones.map((zone) => (
-                    <option key={zone.id} value={zone.code}>
-                      {zone.label}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <label className="text-sm font-medium text-slate-300">Weight</label>
-                <Input
-                  type="number"
-                  min="0.1"
-                  max="10"
-                  step="0.1"
-                  value={weight}
-                  onChange={(event) => setWeight(event.target.value)}
-                  placeholder="1.0"
-                  required
-                />
-              </div>
-              <div className="grid gap-2">
-                <label className="text-sm font-medium text-slate-300">Priority</label>
-                <Select
-                  value={priority}
-                  onChange={(event) => setPriority(event.target.value)}
-                >
-                  <option value="LOW">Low</option>
-                  <option value="MEDIUM">Medium</option>
-                  <option value="HIGH">High</option>
-                  <option value="URGENT">Urgent</option>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <label className="text-sm font-medium text-transparent">Create</label>
-                <Button
-                  type="submit"
-                  isLoading={pendingActions["create-task"]}
-                  disabled={!canCreateTask}
-                >
-                  Create Task
-                </Button>
-              </div>
-            </form>
-          ) : (
-            <form className="grid gap-4" onSubmit={handleCreateBulkTasks}>
-              <div className="grid gap-2">
-                <label className="text-sm font-medium text-slate-300">Bulk Input</label>
-                <textarea
-                  rows={7}
-                  className="w-full rounded-2xl border border-white/15 bg-slate-950/50 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none"
-                  placeholder={"A -> B | 5kg | HIGH\nC -> D | 2kg | LOW\nA -> C | 7kg | URGENT"}
-                  value={bulkText}
-                  onChange={(event) => setBulkText(event.target.value)}
-                  required
-                />
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-xs text-slate-400">Format: Pickup -&gt; Drop | Weightkg | Priority</p>
-                <Button
-                  type="submit"
-                  isLoading={pendingActions["create-bulk-task"]}
-                  disabled={!bulkText.trim()}
-                >
-                  Create Bulk Tasks
-                </Button>
-              </div>
-            </form>
-          )}
+            {/* Drop zone — all zones except pickup */}
+            <div className="grid gap-2">
+              <label className="text-sm font-medium text-slate-300">Drop Zone</label>
+              <Select
+                value={selectedDropZone}
+                onChange={(event) => { setDropZone(event.target.value); }}
+                required
+              >
+                {!selectedDropZone ? <option value="">Select drop zone</option> : null}
+                {availableDropZones.map((zone) => (
+                  <option key={zone.id} value={zone.code}>
+                    {zone.label || `Zone ${zone.code}`}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            {/* Weight with 2kg strict cap */}
+            <div className="grid gap-2">
+              <label className="text-sm font-medium text-slate-300">
+                Weight (kg)
+              </label>
+              <Input
+                type="number"
+                min="0.1"
+                max="2"
+                step="0.1"
+                value={weight}
+                onChange={(event) => {
+                  setWeight(event.target.value);
+                  const v = Number(event.target.value);
+                  if (v > 2) setWeightError("Max 2 kg.");
+                  else if (v <= 0) setWeightError("Must be > 0.");
+                  else setWeightError("");
+                }}
+                placeholder="1.0"
+                required
+              />
+              {weightError ? (
+                <p className="text-xs text-rose-400">{weightError}</p>
+              ) : (
+                <p className="text-xs text-slate-400">Max payload: 2 kg</p>
+              )}
+            </div>
+
+            <div className="grid gap-2">
+              <label className="text-sm font-medium text-transparent">Create</label>
+              <Button type="submit" isLoading={pendingActions["create-task"]} disabled={!canCreateTask}>
+                Create Task
+              </Button>
+            </div>
+          </form>
         </CardContent>
       </Card>
 
@@ -310,18 +274,32 @@ export default function Tasks() {
               <ListFilter className="h-5 w-5 text-cyan-300" />
               Queue View
             </CardTitle>
-            <CardDescription>Pending and assigned dispatch work ordered by priority, then oldest first.</CardDescription>
+            <CardDescription>Pending and assigned dispatch work currently waiting in the queue.</CardDescription>
           </div>
-          <Button type="button" variant="secondary" size="sm" onClick={() => setQueueOpen((value) => !value)}>
-            {queueOpen ? "Hide Queue" : "Show Queue"}
-          </Button>
+          <div className="flex items-center gap-2">
+            {queueTasks.length > 0 ? (
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                isLoading={clearingQueue}
+                onClick={handleClearQueue}
+              >
+                <Trash2 className="h-4 w-4" />
+                Clear Queue
+              </Button>
+            ) : null}
+            <Button type="button" variant="secondary" size="sm" onClick={() => setQueueOpen((value) => !value)}>
+              {queueOpen ? "Hide Queue" : "Show Queue"}
+            </Button>
+          </div>
         </CardHeader>
         {queueOpen ? (
           <CardContent>
             {queueLoading && queueTasks.length === 0 ? (
               <TasksTableSkeleton />
             ) : queueTasks.length === 0 ? (
-              <EmptyState title="Queue is clear" description="Pending and assigned tasks will appear here in priority order." />
+              <EmptyState title="Queue is clear" description="Pending and assigned tasks will appear here." />
             ) : (
               <div className="grid gap-3">
                 {queueTasks.map((task, index) => {
@@ -334,20 +312,16 @@ export default function Tasks() {
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone="neutral">#{index + 1}</Badge>
                             <span className="font-mono text-sm text-slate-300" title={task.id}>{formatTaskId(task.id)}</span>
-                            <Badge className={task.priority === "URGENT" ? "bg-red-500/20 text-red-200" : task.priority === "HIGH" ? "bg-orange-500/20 text-orange-200" : task.priority === "MEDIUM" ? "bg-blue-500/20 text-blue-200" : "bg-slate-500/20 text-slate-200"}>
-                              {task.priority || "MEDIUM"}
-                            </Badge>
                             <Badge className={statusMeta.className}>{statusMeta.label}</Badge>
+                            {Number(task.weight) > 2 || task.assignedType === "HUMAN_WORKER" ? (
+                              <Badge tone="warning">Human Worker (Courier)</Badge>
+                            ) : (
+                              <Badge tone="primary">Robot Eligible</Badge>
+                            )}
                           </div>
                           <div className="mt-2 text-sm text-slate-300">
                             {task.pickup_zone_label || task.pickup_zone || "Unknown"} to {task.drop_zone_label || task.drop_zone || "Unknown"} · {formatWeight(task.weight)} kg
                           </div>
-                          {task.interruptsPending ? (
-                            <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
-                              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                              <span>Urgent task waiting — complete this one first is not required, but consider prioritizing.</span>
-                            </div>
-                          ) : null}
                         </div>
                         <div className="text-sm text-slate-400">{formatDateTime(task.createdAt)}</div>
                       </div>
@@ -371,7 +345,7 @@ export default function Tasks() {
           ) : tasks.length === 0 ? (
             <EmptyState
               title="No tasks available"
-              description="Create the first task above to populate the task table."
+              description="Create a manual emergency task above if you need a backup job in the system."
             />
           ) : (
             <>
@@ -383,7 +357,6 @@ export default function Tasks() {
                       <th className="pb-3 font-medium">Pickup Zone</th>
                       <th className="pb-3 font-medium">Drop Zone</th>
                       <th className="pb-3 font-medium">Weight</th>
-                      <th className="pb-3 font-medium">Priority</th>
                       <th className="pb-3 font-medium">Status</th>
                       <th className="pb-3 font-medium">Created Time</th>
                       <th className="pb-3 font-medium text-right">Actions</th>
@@ -419,36 +392,55 @@ export default function Tasks() {
                           </td>
                           <td className="py-4 text-white">{formatWeight(task.weight)} kg</td>
                           <td className="py-4">
-                            <Badge className={task.priority === "URGENT" ? "bg-red-500/20 text-red-200" : task.priority === "HIGH" ? "bg-orange-500/20 text-orange-200" : task.priority === "MEDIUM" ? "bg-blue-500/20 text-blue-200" : "bg-slate-500/20 text-slate-200"}>
-                              {task.priority || "MEDIUM"}
-                            </Badge>
-                          </td>
-                          <td className="py-4">
                             <Badge className={statusMeta.className}>{statusMeta.label}</Badge>
                           </td>
                           <td className="py-4 text-slate-400">{formatDateTime(task.createdAt)}</td>
                           <td className="py-4">
                             <div className="flex flex-wrap justify-end gap-2">
-                              {task.status === "PENDING" ? (
-                                <Button
-                                  size="sm"
-                                  isLoading={pendingActions[`assign-${task.id}`]}
-                                  onClick={() => assignTaskAction(task.id)}
-                                >
-                                  Assign
-                                </Button>
-                              ) : null}
+                              {task.status === "PENDING" ? (() => {
+                                const isHumanTask = Number(task.weight) > 2 || task.assignedType === "HUMAN_WORKER";
+                                const taskPickupCode = task.pickup_zone_code || task.pickup_zone_id?.code || task.pickup_zone;
+                                const isMatch = taskPickupCode === robotZoneCode;
 
-                              {['ASSIGNED', 'IN_PROGRESS'].includes(task.status) ? (
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  isLoading={pendingActions[`complete-${task.id}`]}
-                                  onClick={() => completeTaskAction(task.id)}
-                                >
-                                  Complete
-                                </Button>
-                              ) : null}
+                                if (isHumanTask) {
+                                  return (
+                                    <Button
+                                      size="sm"
+                                      variant="primary"
+                                      isLoading={pendingActions[`complete-${task.id}`]}
+                                      onClick={() => completeTaskAction(task.id)}
+                                    >
+                                      <CheckCircle2 className="h-4 w-4" />
+                                      Complete Courier Task
+                                    </Button>
+                                  );
+                                }
+
+                                if (!isMatch) {
+                                  return (
+                                    <Button
+                                      size="sm"
+                                      variant="secondary"
+                                      disabled
+                                      title={`Cannot assign: task pickup is Zone ${taskPickupCode}, but robot is at Zone ${robotZoneCode || "unknown"}.`}
+                                    >
+                                      Wrong Zone
+                                    </Button>
+                                  );
+                                }
+
+                                return (
+                                  <Button
+                                    size="sm"
+                                    isLoading={pendingActions[`assign-${task.id}`]}
+                                    onClick={() => assignTaskAction(task.id)}
+                                  >
+                                    Assign
+                                  </Button>
+                                );
+                              })() : null}
+
+                              {/* Complete button removed here — task completion is performed on Robot Prototype Monitor */}
 
                               <Button
                                 size="sm"

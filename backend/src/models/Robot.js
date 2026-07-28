@@ -11,7 +11,7 @@ const robotSchema = new mongoose.Schema(
       default: "IDLE"
     },
     autoMode: { type: Boolean, default: true },
-    maxCapacityKg: { type: Number, default: 1, min: 0 },
+    maxCapacityKg: { type: Number, default: 2, min: 0 },
     location_zone_id: { type: mongoose.Schema.Types.ObjectId, ref: "Zone", required: true }
   },
   { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }

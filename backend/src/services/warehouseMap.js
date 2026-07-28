@@ -1,24 +1,55 @@
+/**
+ * Physical warehouse map — L-shaped track layout (3 zones).
+ *
+ * Real-world layout:
+ *   Zone A = South (bottom) — robot home/start position
+ *   Zone B = North (top)    — robot travels straight north from A to B
+ *   Zone C = West of B      — robot turns left at B and travels west to C
+ *
+ *   Path shape (top-down view):
+ *
+ *     C ←─────────── B
+ *                    │
+ *                    │
+ *                    │
+ *                    A
+ *
+ * Coordinate system (x increases right, y increases down — SVG convention):
+ *   A = (142, 147)  — bottom-right (south)
+ *   B = (142,   0)  — top-right   (north)
+ *   C = (  0,   0)  — top-left    (west of B)
+ *
+ * Scale: 1 unit ≈ 1 cm (147cm vertical leg, 142cm horizontal leg).
+ * Horizontal distance chosen proportionally to match aisles "71cm apart" × 2 bays.
+ */
+
 export const warehouseMap = Object.freeze({
-  width: 200,
-  height: 300,
+  widthCm: 142,
+  heightCm: 147,
   zones: Object.freeze([
-    { id: "A", x: 0, y: 0, type: "PICKUP", label: "Zone A" },
-    { id: "B", x: 200, y: 0, type: "PICKUP", label: "Zone B" },
-    { id: "C", x: 200, y: 300, type: "DROP", label: "Zone C" },
-    { id: "D", x: 0, y: 300, type: "DROP", label: "Zone D" }
+    { id: "A", x: 142, y: 147, type: "PICKUP",  label: "Zone A" }, // South — home
+    { id: "B", x: 142, y: 0,   type: "PICKUP",  label: "Zone B" }, // North
+    { id: "C", x: 0,   y: 0,   type: "DROPOFF", label: "Zone C" }  // West of B
+  ]),
+  // Ordered track nodes for drawing the L-shaped path
+  trackNodes: Object.freeze([
+    { x: 142, y: 147 }, // A (south)
+    { x: 142, y: 0   }, // B (north)
+    { x: 0,   y: 0   }  // C (west of B)
   ]),
   paths: Object.freeze([
     Object.freeze(["A", "B"]),
+    Object.freeze(["A", "C"]),
+    Object.freeze(["B", "A"]),
     Object.freeze(["B", "C"]),
-    Object.freeze(["C", "D"]),
-    Object.freeze(["D", "A"])
+    Object.freeze(["C", "A"]),
+    Object.freeze(["C", "B"])
   ])
 });
 
-const DEFAULT_ROUTE = Object.freeze(["A", "B", "C", "D"]);
-const ROUTE_RING = Object.freeze(["A", "B", "C", "D"]);
-const SEGMENT_DURATION_MS = 5000;
 const ZONE_LOOKUP = new Map(warehouseMap.zones.map((zone) => [zone.id, zone]));
+const DEFAULT_ROUTE = Object.freeze(["A", "B", "C"]);
+const SEGMENT_DURATION_MS = 5000;
 
 function cloneZone(zone) {
   return { ...zone };
@@ -26,10 +57,11 @@ function cloneZone(zone) {
 
 export function getWarehouseMap() {
   return {
-    width: warehouseMap.width,
-    height: warehouseMap.height,
+    widthCm: warehouseMap.widthCm,
+    heightCm: warehouseMap.heightCm,
     zones: warehouseMap.zones.map(cloneZone),
     paths: warehouseMap.paths.map((path) => [...path]),
+    trackNodes: [...warehouseMap.trackNodes],
     defaultRoute: [...DEFAULT_ROUTE]
   };
 }
@@ -38,6 +70,10 @@ export function getDefaultTaskRoute() {
   return [...DEFAULT_ROUTE];
 }
 
+/**
+ * Normalise an incoming zone identifier to one of the canonical IDs: "A", "B", "C".
+ * Accepts objects (with .code/.id/.label/.name), strings like "Zone A", "ZONE_A", "zone-c", "A", etc.
+ */
 export function normalizeMapZoneCode(value) {
   const raw =
     value && typeof value === "object"
@@ -47,32 +83,43 @@ export function normalizeMapZoneCode(value) {
 
   if (ZONE_LOOKUP.has(normalized)) return normalized;
 
-  const zoneMatch = normalized.match(/\bZONE[_\s-]*([A-D])\b/);
-  if (zoneMatch?.[1] && ZONE_LOOKUP.has(zoneMatch[1])) return zoneMatch[1];
+  // Accept "Zone A" / "ZONE_A" / "zone-b" style
+  const match = normalized.match(/\bZONE[_\s-]*([A-C])\b/);
+  if (match?.[1] && ZONE_LOOKUP.has(match[1])) return match[1];
 
-  const singleLetterMatch = normalized.match(/\b([A-D])\b/);
-  if (singleLetterMatch?.[1] && ZONE_LOOKUP.has(singleLetterMatch[1])) return singleLetterMatch[1];
+  const letterMatch = normalized.match(/\b([A-C])\b/);
+  if (letterMatch?.[1] && ZONE_LOOKUP.has(letterMatch[1])) return letterMatch[1];
 
   return null;
 }
 
+/**
+ * Returns the shortest ordered route (array of zone IDs) from startZone to endZone
+ * along the L-shaped track.
+ *
+ * The physical route connectivity is:  A ↔ B ↔ C
+ * so A→C means passing through B, and C→A means passing through B.
+ */
 export function routeForZones(startZone, endZone) {
-  const start = normalizeMapZoneCode(startZone) || DEFAULT_ROUTE[0];
-  const end = normalizeMapZoneCode(endZone) || DEFAULT_ROUTE[DEFAULT_ROUTE.length - 1];
-  const startIndex = ROUTE_RING.indexOf(start);
-  const endIndex = ROUTE_RING.indexOf(end);
+  const start = normalizeMapZoneCode(startZone);
+  const end = normalizeMapZoneCode(endZone);
 
-  if (startIndex === -1 || endIndex === -1) return getDefaultTaskRoute();
+  if (!start || !end) return [...DEFAULT_ROUTE];
   if (start === end) return [start];
 
-  const route = [start];
-  let cursor = startIndex;
+  // Physical adjacency on L-track: A-B-C in a line
+  const TRACK_ORDER = ["A", "B", "C"];
+  const startIdx = TRACK_ORDER.indexOf(start);
+  const endIdx = TRACK_ORDER.indexOf(end);
 
-  while (route[route.length - 1] !== end && route.length <= ROUTE_RING.length) {
-    cursor = (cursor + 1) % ROUTE_RING.length;
-    route.push(ROUTE_RING[cursor]);
+  if (startIdx === -1 || endIdx === -1) return [...DEFAULT_ROUTE];
+
+  // Walk from start to end (forward or backward along the chain)
+  const step = endIdx > startIdx ? 1 : -1;
+  const route = [];
+  for (let i = startIdx; i !== endIdx + step; i += step) {
+    route.push(TRACK_ORDER[i]);
   }
-
   return route;
 }
 
@@ -83,7 +130,7 @@ export function getZoneByMapId(id) {
 
 export function getRouteSegments(route = DEFAULT_ROUTE) {
   const normalizedRoute = route.map(normalizeMapZoneCode).filter(Boolean);
-  const effectiveRoute = normalizedRoute.length > 1 ? normalizedRoute : DEFAULT_ROUTE;
+  const effectiveRoute = normalizedRoute.length > 1 ? normalizedRoute : [...DEFAULT_ROUTE];
 
   return effectiveRoute.slice(0, -1).map((fromId, index) => {
     const toId = effectiveRoute[index + 1];
@@ -116,7 +163,6 @@ function nearestZoneId(point) {
       nearestDistance = distance;
     }
   }
-
   return nearest.id;
 }
 
@@ -128,10 +174,10 @@ export function getRobotSimulationStatus({
   idleZone = null
 } = {}) {
   const normalizedRoute = (route || []).map(normalizeMapZoneCode).filter(Boolean);
-  const effectiveRoute = normalizedRoute.length > 1 ? normalizedRoute : DEFAULT_ROUTE;
+  const effectiveRoute = normalizedRoute.length > 1 ? normalizedRoute : [...DEFAULT_ROUTE];
   const segments = getRouteSegments(effectiveRoute);
 
-  // 1. If we have an active task in progress
+  // 1. Active task in progress
   if (task) {
     const start = task.startedAt || task.assignedAt || task.createdAt || now;
     const startTime = new Date(start).getTime();
@@ -139,33 +185,20 @@ export function getRobotSimulationStatus({
     const loopDuration = segments.length * SEGMENT_DURATION_MS;
 
     if (elapsed >= loopDuration) {
-      const destZone = segments[segments.length - 1]?.toZone || ZONE_LOOKUP.get(effectiveRoute[effectiveRoute.length - 1]) || ZONE_LOOKUP.get("D");
+      const destZone = segments[segments.length - 1]?.toZone || ZONE_LOOKUP.get(effectiveRoute[effectiveRoute.length - 1]) || ZONE_LOOKUP.get("C");
       return {
-        x: destZone.x,
-        y: destZone.y,
-        currentZone: destZone.id,
-        status: "IDLE",
-        taskStatus: "COMPLETED",
-        currentTask: taskId,
-        progress: 100,
-        route: [...effectiveRoute],
-        segment: null,
-        completed: true
+        x: destZone.x, y: destZone.y,
+        currentZone: destZone.id, status: "IDLE", taskStatus: "COMPLETED",
+        currentTask: taskId, progress: 100, route: [...effectiveRoute], segment: null, completed: true
       };
     }
 
     if (elapsed <= 0) {
       const startZone = segments[0]?.fromZone || ZONE_LOOKUP.get(effectiveRoute[0]) || ZONE_LOOKUP.get("A");
       return {
-        x: startZone.x,
-        y: startZone.y,
-        currentZone: startZone.id,
-        status: "ASSIGNED",
-        taskStatus: "ASSIGNED",
-        currentTask: taskId,
-        progress: 0,
-        route: [...effectiveRoute],
-        segment: null
+        x: startZone.x, y: startZone.y,
+        currentZone: startZone.id, status: "ASSIGNED", taskStatus: "ASSIGNED",
+        currentTask: taskId, progress: 0, route: [...effectiveRoute], segment: null
       };
     }
 
@@ -176,52 +209,28 @@ export function getRobotSimulationStatus({
     const progress = Math.min(99, Math.round(((segmentIndex + segmentProgress) / segments.length) * 100));
 
     return {
-      x: Math.round(point.x),
-      y: Math.round(point.y),
-      currentZone: nearestZoneId(point),
-      status: "MOVING",
-      taskStatus: "IN_PROGRESS",
-      currentTask: taskId,
-      progress,
-      route: [...effectiveRoute],
-      segment: {
-        from: segment.from,
-        to: segment.to,
-        index: segmentIndex,
-        progress: Number(segmentProgress.toFixed(2))
-      }
+      x: Math.round(point.x), y: Math.round(point.y),
+      currentZone: nearestZoneId(point), status: "MOVING", taskStatus: "IN_PROGRESS",
+      currentTask: taskId, progress, route: [...effectiveRoute],
+      segment: { from: segment.from, to: segment.to, index: segmentIndex, progress: Number(segmentProgress.toFixed(2)) }
     };
   }
 
-  // 2. If no active task and we want to place it statically at idleZone
+  // 2. Static idle at known zone
   if (idleZone) {
     const zone = ZONE_LOOKUP.get(normalizeMapZoneCode(idleZone)) || ZONE_LOOKUP.get("A");
     return {
-      x: zone.x,
-      y: zone.y,
-      currentZone: zone.id,
-      status: "IDLE",
-      taskStatus: "STATIC",
-      currentTask: null,
-      progress: 0,
-      route: [zone.id],
-      segment: null
+      x: zone.x, y: zone.y, currentZone: zone.id, status: "IDLE",
+      taskStatus: "STATIC", currentTask: null, progress: 0, route: [zone.id], segment: null
     };
   }
 
-  // 3. Fallback clock-based loop simulation for interactive demo
+  // 3. Fallback clock-based loop simulation
   if (segments.length === 0) {
-    const zone = ZONE_LOOKUP.get(effectiveRoute[0]) || ZONE_LOOKUP.get(DEFAULT_ROUTE[0]);
+    const zone = ZONE_LOOKUP.get(effectiveRoute[0]) || ZONE_LOOKUP.get("A");
     return {
-      x: zone.x,
-      y: zone.y,
-      currentZone: zone.id,
-      status: "IDLE",
-      taskStatus: "PENDING",
-      currentTask: taskId,
-      progress: 0,
-      route: [...effectiveRoute],
-      segment: null
+      x: zone.x, y: zone.y, currentZone: zone.id, status: "IDLE",
+      taskStatus: "PENDING", currentTask: taskId, progress: 0, route: [...effectiveRoute], segment: null
     };
   }
 
@@ -234,19 +243,10 @@ export function getRobotSimulationStatus({
   const progress = Math.round(((segmentIndex + segmentProgress) / segments.length) * 100);
 
   return {
-    x: Math.round(point.x),
-    y: Math.round(point.y),
-    currentZone: nearestZoneId(point),
-    status: "MOVING",
+    x: Math.round(point.x), y: Math.round(point.y),
+    currentZone: nearestZoneId(point), status: "MOVING",
     taskStatus: progress >= 98 ? "COMPLETING" : "IN_PROGRESS",
-    currentTask: taskId,
-    progress,
-    route: [...effectiveRoute],
-    segment: {
-      from: segment.from,
-      to: segment.to,
-      index: segmentIndex,
-      progress: Number(segmentProgress.toFixed(2))
-    }
+    currentTask: taskId, progress, route: [...effectiveRoute],
+    segment: { from: segment.from, to: segment.to, index: segmentIndex, progress: Number(segmentProgress.toFixed(2)) }
   };
 }

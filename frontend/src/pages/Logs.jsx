@@ -163,8 +163,12 @@ export default function Logs() {
         page: currentPage,
         limit: PAGE_SIZE
       });
-      setLogs(response.logs || []);
-      setTotal(response.total || 0);
+      const rawList = response.logs || [];
+      const cleanList = rawList.filter(
+        (log) => log.eventType !== "ROBOT_NUDGE" && log.event_type !== "ROBOT_NUDGE"
+      );
+      setLogs(cleanList);
+      setTotal(cleanList.length);
       setSummary({ ...emptySummary, ...(response.summary || {}) });
       setError("");
       setLastUpdated(new Date().toISOString());

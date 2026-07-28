@@ -15,8 +15,9 @@ import logsRoutes from "./routes/logs.js";
 import inventoryRoutes from "./routes/inventory.js";
 import ordersRoutes from "./routes/orders.js";
 import picklistsRoutes from "./routes/picklists.js";
+import copilotRoutes from "./routes/copilot.js";
+import { ensurePickListCollectionIndexes } from "./models/PickList.js";
 import { connectDb, isDbConnected, mongoose } from "./db.js";
-import { ensureOrderCollectionIndexes } from "./models/Order.js";
 import { Robot } from "./models/Robot.js";
 import { Zone } from "./models/Zone.js";
 
@@ -64,17 +65,19 @@ app.use("/api/logs", logsRoutes);
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/orders", ordersRoutes);
 app.use("/api/picklists", picklistsRoutes);
+app.use("/api/copilot", copilotRoutes);
 
 app.use((_req, res) => res.status(404).json({ message: "Not found." }));
 
 async function ensureSingleRobot() {
   const robots = await Robot.find({}).sort({ createdAt: 1 });
-  const chargeZone = await Zone.findOne({ code: "HOME" });
+  // Default to Zone A (start position)
+  const zoneA = await Zone.findOne({ code: "A" });
 
   if (robots.length === 0) {
     const created = await Robot.create({
       name: "Robot-01",
-      location_zone_id: chargeZone?._id || null
+      location_zone_id: zoneA?._id || null
     });
     console.log(`[Robot] Initialized single robot: id=${created.id} name=${created.name}`);
     return;
@@ -87,11 +90,11 @@ async function ensureSingleRobot() {
   }
 }
 
+// 3-zone physical layout: A (start Aisle 1), B (mid Aisle 2), C (end Aisle 3)
 const DEFAULT_ZONES = Object.freeze([
-  { code: "HOME", name: "HOME", description: "Home base for the robot.", label: "HOME", type: "CHARGING", isHome: true },
-  { code: "Z1", name: "Z1", description: "Primary handling zone.", label: "Z1", type: "PICKUP", isHome: false },
-  { code: "Z2", name: "Z2", description: "Secondary handling zone.", label: "Z2", type: "PICKUP", isHome: false },
-  { code: "Z3", name: "Z3", description: "Tertiary handling zone.", label: "Z3", type: "DROPOFF", isHome: false }
+  { code: "A", name: "Zone A", description: "Start of Aisle 1 — robot home position.", label: "Zone A", type: "PICKUP", isHome: true },
+  { code: "B", name: "Zone B", description: "Mid-point of Aisle 2.", label: "Zone B", type: "PICKUP", isHome: false },
+  { code: "C", name: "Zone C", description: "End of Aisle 3.", label: "Zone C", type: "DROPOFF", isHome: false }
 ]);
 
 async function ensureZones() {
@@ -119,9 +122,9 @@ async function start() {
     const dbName = mongoose.connection.name;
     console.log(`MongoDB connected ✅ (db=${dbName})`);
 
-    await ensureOrderCollectionIndexes();
     await ensureZones();
     await ensureSingleRobot();
+    await ensurePickListCollectionIndexes();
 
     app.listen(port, () => {
       console.log(`Backend listening on http://localhost:${port}`);

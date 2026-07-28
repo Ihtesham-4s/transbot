@@ -2,9 +2,11 @@ import express from "express";
 import { authMiddleware } from "../middleware/authMiddleware.js";
 import { Robot } from "../models/Robot.js";
 import { Task } from "../models/Task.js";
+import { Zone } from "../models/Zone.js";
 import { Log } from "../models/Log.js";
 import { ROBOT_STATES, validateTransition } from "../constants/robotStates.js";
 import { autoAssignTask } from "../services/autoAssignService.js";
+import { sendRobotSerialCommand } from "../services/robotSerialService.js";
 import { logEvent, normalizeSeverity } from "../utils/logger.js";
 
 const router = express.Router();
@@ -220,8 +222,22 @@ router.put("/:id/reset", async (req, res) => {
       await task.save();
     }
 
+    // Reset robot location to Zone A (Home) and state to IDLE
+    const zoneA = await Zone.findOne({ code: "A" });
+    if (zoneA) {
+      robot.location_zone_id = zoneA._id;
+    }
     robot.currentState = ROBOT_STATES.IDLE;
     await robot.save();
+    await robot.populate("location_zone_id");
+
+    // Automatically send RESET over serial to Arduino
+    try {
+      await sendRobotSerialCommand("RESET");
+      console.log(`[robots/reset] Sent RESET command to Arduino hardware.`);
+    } catch (serialError) {
+      console.warn(`[robots/reset] Serial RESET notice:`, serialError?.message);
+    }
 
     await logEvent({
       eventType: "ROBOT_RESET",

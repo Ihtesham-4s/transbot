@@ -14,6 +14,7 @@ import { useAuth } from "../context/AuthContext";
 import { getDashboardOverview } from "../lib/api";
 import { formatDateTime, formatTaskId, formatWeight, getErrorMessage } from "../lib/formatters";
 import { getRobotStateMeta, getTaskStatusMeta } from "../lib/status";
+import WarehouseMap from "../components/WarehouseMap";
 
 function formatNumber(value) {
   return new Intl.NumberFormat("en-US").format(Number(value || 0));
@@ -36,7 +37,6 @@ function defaultOverview() {
       total: 0,
       open: 0,
       byStatus: {},
-      byPriority: {},
       recent: []
     },
     zones: {
@@ -67,7 +67,6 @@ function mergeOverview(raw) {
       ...fallback.tasks,
       ...raw.tasks,
       byStatus: { ...fallback.tasks.byStatus, ...(raw.tasks?.byStatus || {}) },
-      byPriority: { ...fallback.tasks.byPriority, ...(raw.tasks?.byPriority || {}) },
       recent: raw.tasks?.recent || []
     },
     zones: {
@@ -100,7 +99,6 @@ function TaskRow({ task }) {
         </div>
         <div className="flex flex-wrap gap-2">
           <Badge className={statusMeta.className}>{statusMeta.label}</Badge>
-          <Badge tone="neutral">{task.priority || "MEDIUM"}</Badge>
         </div>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-400">
@@ -129,7 +127,7 @@ function DashboardSkeleton() {
 
 export default function Dashboard() {
   const { token } = useAuth();
-  const { refreshing, refreshData, lastUpdated, loadError } = useAppData();
+  const { robot: liveRobot, refreshing, refreshData, lastUpdated, loadError } = useAppData();
   const [overviewRaw, setOverviewRaw] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -220,11 +218,19 @@ export default function Dashboard() {
               icon={<CheckCircle2 className="h-4 w-4" />}
             />
             <StatCard
-              label="Zones"
-              value={formatNumber(overview.zones.total)}
-              helper={`${formatNumber(overview.zones.byType.PICKUP)} pickup, ${formatNumber(overview.zones.byType.DROPOFF)} dropoff`}
+              label="Current Zone"
+              value={liveRobot?.location || overview.robot.locationLabel || "--"}
+              helper="Robot's last logged position"
               tone="primary"
-              icon={<MapPinned className="h-4 w-4" />}
+              icon={<Warehouse className="h-4 w-4" />}
+            />
+          </div>
+
+          {/* Warehouse map hero */}
+          <div className="mt-6">
+            <WarehouseMap
+              robotZone={liveRobot?.location || overview.robot.locationLabel}
+              activeTask={activeTask}
             />
           </div>
 

@@ -2,6 +2,7 @@ import { ROBOT_STATES } from "../constants/robotStates.js";
 import { Robot } from "../models/Robot.js";
 import { Task } from "../models/Task.js";
 import { logEvent } from "../utils/logger.js";
+import { sendRobotSerialCommand } from "./robotSerialService.js";
 
 const PRIORITY_WEIGHT = Object.freeze({
   LOW: 1,
@@ -20,13 +21,37 @@ function agingMinutes(task) {
   return Math.max(0, (Date.now() - createdAtMs) / 60000);
 }
 
-function isTaskFeasible(task, maxWeightKg) {
+/**
+ * Checks if a task is feasible for the given robot.
+ *
+ * Rules (3-zone L-track):
+ *  - Both zones must be active and exist
+ *  - Pickup zone must differ from drop zone
+ *  - Pickup zone must match the robot's current location
+ *  - Item weight must be a number > 0 and <= robot max capacity (2 kg)
+ */
+function isTaskFeasible(task, robot) {
+  const maxWeightKg = Number(robot?.maxCapacityKg || 2);
+
   if (!task?.pickup_zone_id || !task?.drop_zone_id) return false;
   if (!task.pickup_zone_id.active || !task.drop_zone_id.active) return false;
-  if (task.pickup_zone_id.type !== "PICKUP") return false;
-  if (task.drop_zone_id.type !== "DROPOFF") return false;
-  if (typeof task.weight !== "number") return false;
+
+  // Zones must be different
+  const pickupId = task.pickup_zone_id._id?.toString() || task.pickup_zone_id.toString();
+  const dropId = task.drop_zone_id._id?.toString() || task.drop_zone_id.toString();
+  if (pickupId === dropId) return false;
+
+  // Pickup zone must match the robot's current zone
+  const robotZoneId = robot?.location_zone_id?._id?.toString() || robot?.location_zone_id?.toString();
+  if (robotZoneId && robotZoneId !== pickupId) return false;
+
+  // Exclude tasks assigned to human workers (> 2 kg)
+  if (task.assignedType === "HUMAN_WORKER" || task.assignedType === "MANUAL") return false;
+
+  // Weight validation (must be <= 2 kg for robot)
+  if (typeof task.weight !== "number" || task.weight <= 0) return false;
   if (task.weight > maxWeightKg) return false;
+
   return true;
 }
 
@@ -52,13 +77,12 @@ export async function autoAssignTask({ trigger = "UNKNOWN", userId = null } = {}
     { currentState: ROBOT_STATES.IDLE, autoMode: true },
     { $set: { currentState: ROBOT_STATES.ASSIGNED } },
     { new: true }
-  );
+  ).populate("location_zone_id");
 
   if (!robot) {
     return { ok: false, reason: "ROBOT_NOT_IDLE_OR_AUTOMODE_OFF" };
   }
 
-  const maxWeightKg = Number(process.env.ROBOT_MAX_WEIGHT_KG || 10);
   const pendingTasks = await Task.find({ status: "PENDING" })
     .populate("pickup_zone_id")
     .populate("drop_zone_id")
@@ -69,7 +93,8 @@ export async function autoAssignTask({ trigger = "UNKNOWN", userId = null } = {}
     return { ok: false, reason: "NO_PENDING_TASKS" };
   }
 
-  const feasibleTasks = pendingTasks.filter((task) => isTaskFeasible(task, maxWeightKg));
+  // Filter: pickup zone must match robot's current zone, zones must differ, weight <= 2 kg
+  const feasibleTasks = pendingTasks.filter((task) => isTaskFeasible(task, robot));
   if (feasibleTasks.length === 0) {
     await releaseRobotToIdle(robot._id);
     return { ok: false, reason: "NO_FEASIBLE_TASKS" };
@@ -101,24 +126,46 @@ export async function autoAssignTask({ trigger = "UNKNOWN", userId = null } = {}
 
   if (!assignedTask) {
     await releaseRobotToIdle(robot._id);
-    return { ok: false, reason: "TASKS_CLAIMED_BY_OTHER_WORKER" };
+    return { ok: false, reason: "CLAIM_RACE_LOST" };
   }
 
-  await logEvent("AUTO_TASK_ASSIGNED", `Auto-assigned task (id=${assignedTask._id}).`, {
-    task_id: assignedTask._id,
+  // AUTOMATIC HARDWARE TRANSMISSION:
+  // Automatically send TASK:AB / TASK:AC / TASK:BA etc. over serial Bluetooth to Arduino!
+  const pickupCode = assignedTask.pickup_zone_id?.code;
+  const dropCode = assignedTask.drop_zone_id?.code;
+  let serialSent = false;
+
+  if (pickupCode && dropCode) {
+    const serialCmd = `TASK:${pickupCode}${dropCode}`;
+    try {
+      await sendRobotSerialCommand("MODE:AUTO");
+      await sendRobotSerialCommand(serialCmd);
+      serialSent = true;
+      console.log(`[autoAssign] Automatically transmitted MODE:AUTO and "${serialCmd}" to Arduino Bluetooth serial.`);
+    } catch (serialError) {
+      console.warn(`[autoAssign] Serial transmit "${serialCmd}" notice:`, serialError?.message);
+    }
+  }
+
+  await logEvent({
+    eventType: "AUTO_TASK_ASSIGNED",
+    module: "TASK",
+    severity: "SUCCESS",
+    message: `Task auto-assigned (id=${assignedTask._id}) to ${robot.name} (trigger=${trigger}). ${serialSent ? "Transmitted command to Arduino." : ""}`,
+    entityType: "Task",
+    entityId: assignedTask._id,
+    actorId: userId,
     robot_id: robot._id,
-    user_id: userId,
+    task_id: assignedTask._id,
     metadata: {
       trigger,
-      timestamp: new Date().toISOString()
+      pickupZone: pickupCode || null,
+      dropZone: dropCode || null,
+      weight: assignedTask.weight,
+      robotZone: robot.location_zone_id?.code || null,
+      serialTransmitted: serialSent
     }
   });
 
-  const populatedRobot = await Robot.findById(robot._id).populate("location_zone_id");
-  return {
-    ok: true,
-    trigger,
-    task: assignedTask.toJSON(),
-    robot: populatedRobot ? populatedRobot.toJSON() : robot.toJSON()
-  };
+  return { ok: true, task: assignedTask.toJSON(), robot: robot.toJSON(), serialSent };
 }

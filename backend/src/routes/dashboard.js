@@ -32,7 +32,6 @@ function serializeTask(task) {
   return {
     id: String(task._id),
     status: task.status,
-    priority: task.priority,
     weight: task.weight,
     pickupZone: task.pickup_zone_id?.code || null,
     pickupZoneLabel: task.pickup_zone_id?.label || null,
@@ -51,7 +50,6 @@ router.get("/overview", async (_req, res) => {
     const [
       robots,
       taskStatusRows,
-      taskPriorityRows,
       recentTasks,
       activeTask,
       zones,
@@ -60,7 +58,6 @@ router.get("/overview", async (_req, res) => {
     ] = await Promise.all([
       Robot.find({}).sort({ createdAt: 1 }).populate("location_zone_id").lean({ virtuals: true }),
       Task.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
-      Task.aggregate([{ $group: { _id: "$priority", count: { $sum: 1 } } }]),
       Task.find({})
         .sort({ createdAt: -1 })
         .limit(6)
@@ -76,7 +73,6 @@ router.get("/overview", async (_req, res) => {
     ]);
 
     const byStatus = countRows(taskStatusRows, TASK_STATUSES);
-    const byPriority = countRows(taskPriorityRows, ["LOW", "MEDIUM", "HIGH", "URGENT"]);
     const byType = countRows(zoneRows, ZONE_TYPES);
     const activeRobot = robots[0] || null;
 
@@ -103,7 +99,6 @@ router.get("/overview", async (_req, res) => {
         total: totalTasks,
         open: openTasks,
         byStatus,
-        byPriority,
         recent: recentTasks.map(serializeTask)
       },
       zones: {

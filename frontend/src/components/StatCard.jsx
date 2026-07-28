@@ -4,15 +4,17 @@ import { Badge } from "./ui/Badge";
 export function StatCard({ label, value, tone = "neutral", icon, helper }) {
   return (
     <Card className="h-full">
-      <CardContent className="flex h-full items-start justify-between gap-4">
+      <CardContent className="flex h-full items-start justify-between gap-4 p-5">
         <div>
-          <div className="text-sm text-slate-400">{label}</div>
-          <div className="brand-heading mt-3 text-3xl font-semibold text-white">{value}</div>
-          {helper ? <div className="mt-2 text-xs text-slate-400">{helper}</div> : null}
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">{label}</div>
+          <div className="brand-heading mt-2 text-2xl font-bold text-white tracking-tight">{value}</div>
+          {helper ? <div className="mt-1.5 text-xs text-slate-400 font-normal">{helper}</div> : null}
         </div>
-        <Badge tone={tone} className="shrink-0">
-          {icon}
-        </Badge>
+        {icon ? (
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-cyan-400 shadow-inner">
+            {icon}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

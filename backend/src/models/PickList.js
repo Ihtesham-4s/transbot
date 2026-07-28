@@ -64,3 +64,18 @@ pickListSchema.set("toJSON", {
 });
 
 export const PickList = mongoose.models.PickList || mongoose.model("PickList", pickListSchema);
+
+export async function ensurePickListCollectionIndexes() {
+  try {
+    const indexes = await PickList.collection.indexes();
+    for (const index of indexes) {
+      if (index.name === "pickNo_1" || index.name === "orderId_1_status_1") {
+        await PickList.collection.dropIndex(index.name);
+        console.log(`[PickList] Dropped legacy index: ${index.name}`);
+      }
+    }
+    await PickList.init();
+  } catch (error) {
+    console.warn("[PickList] Index check notice:", error?.message);
+  }
+}

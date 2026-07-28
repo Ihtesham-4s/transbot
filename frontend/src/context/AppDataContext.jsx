@@ -11,7 +11,6 @@ import {
   assignTask,
   completeTask,
   createTask,
-  createTasksBulk,
   deleteTask,
   getRobot,
   getZones,
@@ -137,8 +136,12 @@ export function AppDataProvider({ children }) {
   const value = useMemo(
     () => ({
       zones,
-      pickupZones: zones.filter((zone) => zone.type === "PICKUP"),
-      dropZones: zones.filter((zone) => zone.type === "DROPOFF"),
+      // All active zones (any can be pickup or drop)
+      allZones: zones,
+      // Pickup zone is fixed to robot's current zone — but expose the full list as fallback
+      pickupZones: zones,
+      // Drop zones = all zones excluding whatever the pickup zone is (computed in the form)
+      dropZones: zones,
       tasks,
       robot,
       logs,
@@ -150,8 +153,6 @@ export function AppDataProvider({ children }) {
       refreshData,
       createTaskAction: (payload) =>
         runAction("create-task", () => createTask(token, payload), "Task created successfully."),
-      createBulkTasksAction: (payload) =>
-        runAction("create-bulk-task", () => createTasksBulk(token, payload)),
       assignTaskAction: (taskId) =>
         runAction(`assign-${taskId}`, () => assignTask(token, taskId), "Task assigned to robot."),
       completeTaskAction: (taskId) =>

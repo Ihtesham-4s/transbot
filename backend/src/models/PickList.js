@@ -24,7 +24,7 @@ const pickListSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-pickListSchema.index({ order_id: 1 }, { unique: true });
+pickListSchema.index({ order_id: 1 }, { sparse: true });
 pickListSchema.index({ status: 1, createdAt: -1 });
 
 function preserveOrFlattenReference(doc, ret, fieldName) {
@@ -69,7 +69,7 @@ export async function ensurePickListCollectionIndexes() {
   try {
     const indexes = await PickList.collection.indexes();
     for (const index of indexes) {
-      if (index.name === "pickNo_1" || index.name === "orderId_1_status_1") {
+      if (index.name === "pickNo_1" || index.name === "orderId_1_status_1" || (index.name === "order_id_1" && index.unique && !index.sparse)) {
         await PickList.collection.dropIndex(index.name);
         console.log(`[PickList] Dropped legacy index: ${index.name}`);
       }

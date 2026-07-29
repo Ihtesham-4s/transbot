@@ -62,6 +62,7 @@ export default function Tasks() {
   const [queueLoading, setQueueLoading] = useState(true);
   const [queueRefreshing, setQueueRefreshing] = useState(false);
   const [clearingQueue, setClearingQueue] = useState(false);
+  const [showClearQueueConfirm, setShowClearQueueConfirm] = useState(false);
 
   // All zones except the robot's current zone are valid drop targets
   const availableDropZones = zones.filter((z) => z.code !== robotZoneCode);
@@ -106,8 +107,9 @@ export default function Tasks() {
     if (!token) return;
     setClearingQueue(true);
     try {
-      await apiFetch("/api/tasks/queue/clear", { method: "DELETE", token });
-      toast.success("Task queue cleared.");
+      const data = await apiFetch("/api/tasks/queue/clear", { method: "DELETE", token });
+      toast.success(`Task queue cleared (${data?.deletedCount || 0} tasks removed).`);
+      setShowClearQueueConfirm(false);
       await handleRefreshAll();
     } catch (clearErr) {
       toast.error(getErrorMessage(clearErr, "Failed to clear queue."));
@@ -185,6 +187,18 @@ export default function Tasks() {
           await deleteTaskAction(taskToDelete.id);
           setTaskToDelete(null);
         }}
+      />
+
+      <ConfirmDialog
+        open={showClearQueueConfirm}
+        title="Clear task queue?"
+        description="This will remove all pending and assigned tasks from the queue and reset the robot to IDLE."
+        icon={<Trash2 className="h-5 w-5 text-rose-200" />}
+        confirmText="Clear queue"
+        confirmLoading={clearingQueue}
+        destructive
+        onCancel={() => setShowClearQueueConfirm(false)}
+        onConfirm={handleClearQueue}
       />
 
       <Card>
@@ -277,13 +291,13 @@ export default function Tasks() {
             <CardDescription>Pending and assigned dispatch work currently waiting in the queue.</CardDescription>
           </div>
           <div className="flex items-center gap-2">
-            {queueTasks.length > 0 ? (
+            {queueTasks.length > 0 || tasks.some((t) => t.status !== "COMPLETED") ? (
               <Button
                 type="button"
                 variant="danger"
                 size="sm"
                 isLoading={clearingQueue}
-                onClick={handleClearQueue}
+                onClick={() => setShowClearQueueConfirm(true)}
               >
                 <Trash2 className="h-4 w-4" />
                 Clear Queue
@@ -335,9 +349,23 @@ export default function Tasks() {
       </Card>
 
       <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Task Queue</CardTitle>
-          <CardDescription>All tasks currently in the system.</CardDescription>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle>Task Queue</CardTitle>
+            <CardDescription>All tasks currently in the system.</CardDescription>
+          </div>
+          {tasks.some((t) => t.status !== "COMPLETED") ? (
+            <Button
+              type="button"
+              variant="danger"
+              size="sm"
+              isLoading={clearingQueue}
+              onClick={() => setShowClearQueueConfirm(true)}
+            >
+              <Trash2 className="h-4 w-4" />
+              Clear Queue
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent>
           {initialLoading && tasks.length === 0 ? (

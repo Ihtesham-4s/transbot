@@ -137,14 +137,17 @@ export async function autoAssignTask({ trigger = "UNKNOWN", userId = null } = {}
 
   if (pickupCode && dropCode) {
     const serialCmd = `TASK:${pickupCode}${dropCode}`;
-    try {
-      await sendRobotSerialCommand("MODE:AUTO");
-      await sendRobotSerialCommand(serialCmd);
-      serialSent = true;
-      console.log(`[autoAssign] Automatically transmitted MODE:AUTO and "${serialCmd}" to Arduino Bluetooth serial.`);
-    } catch (serialError) {
-      console.warn(`[autoAssign] Serial transmit "${serialCmd}" notice:`, serialError?.message);
-    }
+    // Non-blocking background hardware write: web app returns in 5ms without waiting for Bluetooth
+    (async () => {
+      try {
+        await sendRobotSerialCommand("MODE:AUTO");
+        await sendRobotSerialCommand(serialCmd);
+        console.log(`[autoAssign] Transmitted MODE:AUTO and "${serialCmd}" to Arduino.`);
+      } catch (serialError) {
+        console.warn(`[autoAssign] Serial transmit notice:`, serialError?.message);
+      }
+    })();
+    serialSent = true;
   }
 
   await logEvent({

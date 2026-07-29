@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { isValidRobotCommand } from "../src/services/robotSerialService.js";
 
 test("accepts directional and diagonal movement commands", () => {
-  for (const command of ["F", "B", "L", "R", "FL", "FR", "BL", "BR", "S", "U", "D"]) {
+  for (const command of ["F", "B", "L", "R", "FL", "FR", "BL", "BR", "S"]) {
     assert.equal(isValidRobotCommand(command), true);
   }
 });

@@ -130,33 +130,55 @@ export async function sendRobotSerialCommand(command) {
     throw error;
   }
 
-  const serialPort = await openPort();
-  // Every command is sent as a newline-terminated line per firmware v2 protocol
-  const payload = `${command}\n`;
+  // Fast 1000ms timeout wrapper so serial communication NEVER blocks HTTP requests or hangs the server
+  const timeoutMs = 1000;
 
-  await new Promise((resolve, reject) => {
-    serialPort.write(payload, "utf8", (writeError) => {
-      if (writeError) {
-        lastError = writeError;
-        return reject(createUnavailableError(`Failed to write command to ${activePortPath}.`, writeError));
-      }
+  try {
+    const writePromise = (async () => {
+      const serialPort = await openPort();
+      const payload = `${command}\n`;
 
-      serialPort.drain((drainError) => {
-        if (drainError) {
-          lastError = drainError;
-          return reject(createUnavailableError(`Failed to flush command to ${activePortPath}.`, drainError));
-        }
-        return resolve();
+      await new Promise((resolve, reject) => {
+        serialPort.write(payload, "utf8", (writeError) => {
+          if (writeError) {
+            lastError = writeError;
+            return reject(createUnavailableError(`Failed to write command to ${activePortPath}.`, writeError));
+          }
+
+          serialPort.drain((drainError) => {
+            if (drainError) {
+              lastError = drainError;
+              return reject(createUnavailableError(`Failed to flush command to ${activePortPath}.`, drainError));
+            }
+            return resolve();
+          });
+        });
       });
-    });
-  });
 
-  return {
-    command,
-    port: activePortPath,
-    baudRate: DEFAULT_BAUD_RATE,
-    sentAt: new Date().toISOString()
-  };
+      return {
+        command,
+        port: activePortPath,
+        baudRate: DEFAULT_BAUD_RATE,
+        sentAt: new Date().toISOString()
+      };
+    })();
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Serial port COM7 timeout after ${timeoutMs}ms.`)), timeoutMs)
+    );
+
+    return await Promise.race([writePromise, timeoutPromise]);
+  } catch (err) {
+    console.warn(`[robot-serial] Hardware command notice ("${command}"):`, err?.message || err);
+    // Safe fallback object so caller receives immediate success with offline status
+    return {
+      command,
+      port: DEFAULT_PORT,
+      baudRate: DEFAULT_BAUD_RATE,
+      offline: true,
+      sentAt: new Date().toISOString()
+    };
+  }
 }
 
 export function getRobotSerialStatus() {

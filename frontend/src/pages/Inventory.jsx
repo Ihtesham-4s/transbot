@@ -143,11 +143,17 @@ export default function Inventory() {
     event.preventDefault();
     if (!token) return;
 
+    const weightKg = Number(formState.weightKg);
+    if (Number.isNaN(weightKg) || weightKg <= 0) {
+      toast.error("Product weight must be greater than 0 kg.");
+      return;
+    }
+
     const payload = {
       sku: formState.sku,
       name: formState.name,
       category: formState.category || null,
-      weightKg: Number(formState.weightKg),
+      weightKg,
       quantity: Number(formState.quantity),
       minStockLevel: Number(formState.minStockLevel),
       maxStockLevel: Number(formState.maxStockLevel),
@@ -331,7 +337,7 @@ export default function Inventory() {
               </div>
               <div className="grid gap-2">
                 <label className="text-sm font-medium text-slate-300">Weight (kg)</label>
-                <Input type="number" min="0" step="0.1" value={formState.weightKg} onChange={(event) => setFormState((current) => ({ ...current, weightKg: event.target.value }))} required />
+                <Input type="number" min="0.01" step="0.01" value={formState.weightKg} onChange={(event) => setFormState((current) => ({ ...current, weightKg: event.target.value }))} required />
               </div>
               <div className="grid gap-2">
                 <label className="text-sm font-medium text-slate-300">Quantity</label>

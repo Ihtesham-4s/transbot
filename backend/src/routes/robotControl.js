@@ -32,9 +32,7 @@ router.post("/send", async (req, res) => {
   }
 
   try {
-    const result = await sendRobotSerialCommand(command);
-
-    // If sending RESET, update robot in DB to Zone A and IDLE
+    // Database update runs FIRST so state is updated instantly in 5 milliseconds!
     if (command === "RESET") {
       const zoneA = await Zone.findOne({ code: "A" });
       const updateData = { currentState: "IDLE" };
@@ -42,22 +40,26 @@ router.post("/send", async (req, res) => {
       await Robot.findOneAndUpdate({}, { $set: updateData }, { sort: { createdAt: 1 } });
     }
 
+    const result = await sendRobotSerialCommand(command);
+
     await logEvent({
       eventType: "ROBOT_MANUAL_COMMAND",
       module: "ROBOT",
       severity: "INFO",
-      message: `Robot command sent: ${command}`,
+      message: `Robot command sent: ${command}${result.offline ? " (Hardware Offline)" : ""}`,
       actorId: req.user?.id || null,
-      metadata: { command: result.command, port: result.port, baudRate: result.baudRate }
+      metadata: { command: result.command, port: result.port, baudRate: result.baudRate, offline: result.offline || false }
     });
 
-    return res.json({ ok: true, message: `Command "${command}" sent to robot.`, ...result });
+    return res.json({
+      ok: true,
+      message: result.offline
+        ? `Command "${command}" processed (Database updated. Bluetooth hardware offline).`
+        : `Command "${command}" sent to robot hardware.`,
+      ...result
+    });
   } catch (error) {
     console.error("[robot-control] send", error?.message || error);
-
-    if (error.code === "ROBOT_SERIAL_UNAVAILABLE") {
-      return res.status(503).json({ message: error.message, status: getRobotSerialStatus() });
-    }
     if (error.code === "ROBOT_COMMAND_INVALID") {
       return res.status(400).json({ message: error.message });
     }

@@ -5,7 +5,14 @@ const productSchema = new mongoose.Schema(
     sku: { type: String, required: true, unique: true, trim: true, uppercase: true, maxlength: 80 },
     name: { type: String, required: true, trim: true, maxlength: 160 },
     category: { type: String, trim: true, maxlength: 80, default: null },
-    weightKg: { type: Number, required: true, min: 0 },
+    weightKg: {
+      type: Number,
+      required: true,
+      validate: {
+        validator: (val) => typeof val === "number" && val > 0,
+        message: "Weight must be greater than 0 kg"
+      }
+    },
     quantity: { type: Number, required: true, min: 0, default: 0 },
     minStockLevel: { type: Number, required: true, min: 0, default: 5 },
     maxStockLevel: { type: Number, required: true, min: 0, default: 100 },
